@@ -113,11 +113,11 @@ const Login: React.FC = () => {
               )}
             </Button>
 
-            <div className="mt-4 rounded-lg bg-muted p-4 text-sm">
+            {/* <div className="mt-4 rounded-lg bg-muted p-4 text-sm">
               <p className="font-medium text-foreground">Demo Credentials:</p>
               <p className="text-muted-foreground">Email: admin@procurement.com</p>
               <p className="text-muted-foreground">Password: Admin@123</p>
-            </div>
+            </div> */}
           </form>
         </CardContent>
       </Card>
