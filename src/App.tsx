@@ -41,7 +41,7 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/cabinets"
+        path="/cabinet"
         element={
           <ProtectedRoute>
             <AppLayout>
@@ -51,7 +51,7 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/shelves"
+        path="/shelve"
         element={
           <ProtectedRoute>
             <AppLayout>
