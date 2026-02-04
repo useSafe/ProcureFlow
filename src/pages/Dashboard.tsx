@@ -83,8 +83,8 @@ const Dashboard: React.FC = () => {
     { name: 'Archived', value: metrics.archived, fill: '#64748b' },
   ];
 
-  // Top 5 shelves by record count
-  const topShelves = shelfStats.slice(0, 5);
+  // Top 10 shelves by record count
+  const topShelves = shelfStats.slice(0, 10);
 
   // Recent 5 activities
   const recentProcurements = [...(procurements || [])]

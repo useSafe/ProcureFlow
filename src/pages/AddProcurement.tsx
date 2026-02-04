@@ -142,9 +142,9 @@ const AddProcurement: React.FC = () => {
 
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div className="space-y-2">
-                                        <Label className="text-slate-300">PR Number *</Label>
+                                        <Label className="text-slate-300">PR Number(Divison-Month-Year-Number) *</Label>
                                         <Input
-                                            placeholder="e.g., ABC-JAN-26-001"
+                                            placeholder="e.g., DIV-JAN-26-001"
                                             value={prNumber}
                                             onChange={(e) => setPrNumber(e.target.value)}
                                             className="bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"
