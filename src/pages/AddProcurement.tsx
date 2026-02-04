@@ -12,8 +12,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { addProcurement, onCabinetsChange, onShelvesChange, onFoldersChange } from '@/lib/storage'; // Updated imports
-import { Cabinet, Shelf, Folder, ProcurementStatus, UrgencyLevel } from '@/types/procurement';
+import { addProcurement, onCabinetsChange, onShelvesChange, onFoldersChange } from '@/lib/storage';
+import { Cabinet, Shelf, Folder, ProcurementStatus } from '@/types/procurement';
 import { toast } from 'sonner';
 import { Loader2, Save, CalendarIcon } from 'lucide-react';
 import { format } from 'date-fns';
@@ -42,12 +42,7 @@ const AddProcurement: React.FC = () => {
     const [shelfId, setShelfId] = useState('');
     const [folderId, setFolderId] = useState('');
     const [status, setStatus] = useState<ProcurementStatus>('active');
-    const [urgency, setUrgency] = useState<UrgencyLevel>('medium');
     const [date, setDate] = useState<Date | undefined>(new Date());
-    const [notes, setNotes] = useState('');
-    const [selectedTags, setSelectedTags] = useState<string[]>([]);
-
-    const predefinedTags = ['Urgent', 'Recurring', 'High Value', 'Contract'];
 
     useEffect(() => {
         // Subscribe to real-time updates
@@ -92,8 +87,6 @@ const AddProcurement: React.FC = () => {
 
         setIsLoading(true);
 
-        // await new Promise(resolve => setTimeout(resolve, 500)); // Removed manual delay, async call is enough
-
         try {
             await addProcurement({
                 prNumber,
@@ -102,10 +95,10 @@ const AddProcurement: React.FC = () => {
                 shelfId,
                 folderId,
                 status,
-                urgencyLevel: urgency,
+                urgencyLevel: 'medium', // Default value
                 dateAdded: date ? date.toISOString() : new Date().toISOString(),
-                tags: selectedTags,
-                notes: notes || undefined,
+                tags: [], // Empty array
+                notes: undefined,
             });
 
             toast.success('File record added successfully');
@@ -114,14 +107,6 @@ const AddProcurement: React.FC = () => {
             toast.error(error.message || 'Failed to add file record');
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const toggleTag = (tagName: string) => {
-        if (selectedTags.includes(tagName)) {
-            setSelectedTags(selectedTags.filter(t => t !== tagName));
-        } else {
-            setSelectedTags([...selectedTags, tagName]);
         }
     };
 
@@ -135,9 +120,9 @@ const AddProcurement: React.FC = () => {
             </div>
 
             <form onSubmit={handleSubmit}>
-                <div className="grid gap-6 lg:grid-cols-3">
-                    {/* Left Column - Basic Information */}
-                    <div className="lg:col-span-2 space-y-6">
+                <div className="grid gap-6 lg:grid-cols-1">
+                    {/* Main Column */}
+                    <div className="space-y-6">
                         <Card className="border-none bg-[#0f172a] shadow-lg">
                             <CardContent className="p-6 space-y-6">
                                 <div>
@@ -195,7 +180,7 @@ const AddProcurement: React.FC = () => {
                             </CardContent>
                         </Card>
 
-                        {/* Details & Tracking */}
+                        {/* Physical Location & Status */}
                         <Card className="border-none bg-[#0f172a] shadow-lg">
                             <CardContent className="p-6 space-y-6">
                                 <div>
@@ -254,47 +239,6 @@ const AddProcurement: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-slate-300">Tags</Label>
-                                    <div className="flex flex-wrap gap-2">
-                                        {predefinedTags.map((tag) => (
-                                            <button
-                                                key={tag}
-                                                type="button"
-                                                onClick={() => toggleTag(tag)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${selectedTags.includes(tag)
-                                                    ? 'bg-blue-600 text-white'
-                                                    : 'bg-[#1e293b] text-slate-400 hover:bg-[#253045]'
-                                                    }`}
-                                            >
-                                                {tag}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Notes</Label>
-                                    <Textarea
-                                        placeholder="Additional notes or comments..."
-                                        value={notes}
-                                        onChange={(e) => setNotes(e.target.value)}
-                                        className="bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"
-                                        rows={3}
-                                    />
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* Right Column - Status & Urgency */}
-                    <div className="space-y-6">
-                        <Card className="border-none bg-[#0f172a] shadow-lg">
-                            <CardContent className="p-6 space-y-6">
-                                <div>
-                                    <h3 className="text-lg font-semibold text-white mb-1">Status & Urgency</h3>
-                                </div>
-
-                                <div className="space-y-2">
                                     <Label className="text-slate-300">Current Status</Label>
                                     <Select value={status} onValueChange={(val) => setStatus(val as ProcurementStatus)}>
                                         <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
@@ -303,21 +247,6 @@ const AddProcurement: React.FC = () => {
                                         <SelectContent className="bg-[#1e293b] border-slate-700">
                                             <SelectItem value="active" className="text-white">Active</SelectItem>
                                             <SelectItem value="archived" className="text-white">Archived</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Urgency Level</Label>
-                                    <Select value={urgency} onValueChange={(val) => setUrgency(val as UrgencyLevel)}>
-                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-[#1e293b] border-slate-700">
-                                            <SelectItem value="low" className="text-white">Low</SelectItem>
-                                            <SelectItem value="medium" className="text-white">Medium</SelectItem>
-                                            <SelectItem value="high" className="text-white">High</SelectItem>
-                                            <SelectItem value="critical" className="text-white">Critical</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
