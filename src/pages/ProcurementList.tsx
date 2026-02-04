@@ -295,7 +295,7 @@ const ProcurementList: React.FC = () => {
                                     value={filters.cabinetId}
                                     onValueChange={(value) => setFilters({ ...filters, cabinetId: value })}
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-[120px] border-none bg-transparent text-white focus:ring-0">
                                         <SelectValue placeholder="Cabinet" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -312,7 +312,7 @@ const ProcurementList: React.FC = () => {
                                     value={filters.status}
                                     onValueChange={(value) => setFilters({ ...filters, status: value as ProcurementStatus })}
                                 >
-                                    <SelectTrigger className="w-[120px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-[100px] border-none bg-transparent text-white focus:ring-0">
                                         <SelectValue placeholder="Status" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
