@@ -32,8 +32,8 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { getShelves, onShelvesChange, onCabinetsChange, onFoldersChange } from '@/lib/storage';
-import { Shelf, Cabinet, Folder } from '@/types/procurement';
+import { getShelves, onShelvesChange, onCabinetsChange, onFoldersChange, onProcurementsChange } from '@/lib/storage';
+import { Shelf, Cabinet, Folder, Procurement } from '@/types/procurement';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, FolderPlus } from 'lucide-react';
 
@@ -41,6 +41,7 @@ const Cabinets: React.FC = () => {
     const [shelves, setShelves] = useState<Shelf[]>([]);
     const [cabinets, setCabinets] = useState<Cabinet[]>([]);
     const [folders, setFolders] = useState<Folder[]>([]);
+    const [procurements, setProcurements] = useState<Procurement[]>([]);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [currentShelf, setCurrentShelf] = useState<Shelf | null>(null);
@@ -56,10 +57,12 @@ const Cabinets: React.FC = () => {
         const unsubShelves = onShelvesChange(setShelves);
         const unsubCabinets = onCabinetsChange(setCabinets);
         const unsubFolders = onFoldersChange(setFolders);
+        const unsubProcurements = onProcurementsChange(setProcurements);
         return () => {
             unsubShelves();
             unsubCabinets();
             unsubFolders();
+            unsubProcurements();
         };
     }, []);
 
@@ -127,6 +130,17 @@ const Cabinets: React.FC = () => {
 
     const getFolderCount = (shelfId: string) => {
         return folders.filter(f => f.shelfId === shelfId).length;
+    };
+
+    const getHierarchyCounts = (shelfId: string) => {
+        const myFolders = folders.filter(f => f.shelfId === shelfId);
+        const myFolderIds = myFolders.map(f => f.id);
+        const myFiles = procurements.filter(p => myFolderIds.includes(p.folderId));
+
+        return {
+            folders: myFolders.length,
+            files: myFiles.length
+        };
     };
 
     return (
@@ -276,14 +290,42 @@ const Cabinets: React.FC = () => {
                                                         <AlertDialogHeader>
                                                             <AlertDialogTitle>Delete Cabinet?</AlertDialogTitle>
                                                             <AlertDialogDescription className="text-slate-400">
-                                                                This will permanently delete <strong>{shelf.name}</strong> and all folders inside it.
+                                                                {(() => {
+                                                                    const counts = getHierarchyCounts(shelf.id);
+                                                                    const hasContents = counts.folders > 0 || counts.files > 0;
+
+                                                                    if (hasContents) {
+                                                                        return (
+                                                                            <div className="text-red-400 font-medium border border-red-400/20 bg-red-400/10 p-3 rounded-md">
+                                                                                Cannot delete this cabinet.<br />
+                                                                                It contains:<br />
+                                                                                <ul className="list-disc list-inside mt-1 ml-2">
+                                                                                    {counts.folders > 0 && <li><strong>{counts.folders}</strong> Folder{counts.folders !== 1 ? 's' : ''}</li>}
+                                                                                    {counts.files > 0 && <li><strong>{counts.files}</strong> File{counts.files !== 1 ? 's' : ''}</li>}
+                                                                                </ul>
+                                                                                <br />
+                                                                                Please delete all contents first.
+                                                                            </div>
+                                                                        );
+                                                                    }
+                                                                    return <span>This will permanently delete <strong>{shelf.name}</strong> and all folders inside it.</span>;
+                                                                })()}
                                                             </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
                                                                 onClick={() => handleDelete(shelf.id)}
-                                                                className="bg-red-600 hover:bg-red-700 text-white"
+                                                                disabled={(() => {
+                                                                    const c = getHierarchyCounts(shelf.id);
+                                                                    return c.folders > 0 || c.files > 0;
+                                                                })()}
+                                                                className={(() => {
+                                                                    const c = getHierarchyCounts(shelf.id);
+                                                                    return (c.folders > 0 || c.files > 0)
+                                                                        ? "bg-slate-700 text-slate-400 cursor-not-allowed hover:bg-slate-700"
+                                                                        : "bg-red-600 hover:bg-red-700 text-white";
+                                                                })()}
                                                             >
                                                                 Delete
                                                             </AlertDialogAction>

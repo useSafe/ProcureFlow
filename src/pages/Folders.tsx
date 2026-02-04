@@ -310,14 +310,29 @@ const Folders: React.FC = () => {
                                                         <AlertDialogHeader>
                                                             <AlertDialogTitle>Delete Folder?</AlertDialogTitle>
                                                             <AlertDialogDescription className="text-slate-400">
-                                                                This will permanently delete <strong>{folder.name}</strong>.
+                                                                {getFileCount(folder.id) > 0 ? (
+                                                                    <div className="text-red-400 font-medium border border-red-400/20 bg-red-400/10 p-3 rounded-md">
+                                                                        Cannot delete this folder.<br />
+                                                                        It contains:<br />
+                                                                        <ul className="list-disc list-inside mt-1 ml-2">
+                                                                            <li><strong>{getFileCount(folder.id)}</strong> File{getFileCount(folder.id) !== 1 ? 's' : ''}</li>
+                                                                        </ul>
+                                                                        <br />
+                                                                        Please delete or move all contents first.
+                                                                    </div>
+                                                                ) : (
+                                                                    <span>This will permanently delete <strong>{folder.name}</strong>.</span>
+                                                                )}
                                                             </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
                                                                 onClick={() => handleDelete(folder.id)}
-                                                                className="bg-red-600 hover:bg-red-700 text-white"
+                                                                disabled={getFileCount(folder.id) > 0}
+                                                                className={getFileCount(folder.id) > 0
+                                                                    ? "bg-slate-700 text-slate-400 cursor-not-allowed hover:bg-slate-700"
+                                                                    : "bg-red-600 hover:bg-red-700 text-white"}
                                                             >
                                                                 Delete
                                                             </AlertDialogAction>
