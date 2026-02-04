@@ -20,8 +20,8 @@ interface AppLayoutProps {
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/cabinets', label: 'Cabinets', icon: Package },  // Changed from '/cabinet'
-  { path: '/shelves', label: 'Shelves', icon: FolderPlus }, // Changed from '/shelve'
+  { path: '/shelve', label: 'Cabinet', icon: Package },      // Swapped label
+  { path: '/cabinet', label: 'Shelves', icon: FolderPlus },  // Swapped label
   { path: '/folders', label: 'Folders', icon: FileText },
   { path: '/procurement/add', label: 'Add Procurement', icon: FilePlus },
   { path: '/procurement/list', label: 'Records', icon: FileText },
