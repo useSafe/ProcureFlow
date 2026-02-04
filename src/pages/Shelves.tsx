@@ -38,11 +38,11 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 
 const Shelves: React.FC = () => {
-    const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Changed: showing cabinets
-    const [shelves, setShelves] = useState<Shelf[]>([]); // Changed: for counting
+    const [cabinets, setCabinets] = useState<Cabinet[]>([]);
+    const [shelves, setShelves] = useState<Shelf[]>([]);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [currentCabinet, setCurrentCabinet] = useState<Cabinet | null>(null); // Changed
+    const [currentCabinet, setCurrentCabinet] = useState<Cabinet | null>(null);
 
     // Form State
     const [name, setName] = useState('');
@@ -112,7 +112,7 @@ const Shelves: React.FC = () => {
         }
     };
 
-    const getCabinetCount = (cabinetId: string) => { // Changed: count cabinets per shelf
+    const getCabinetCount = (cabinetId: string) => {
         return shelves.filter(s => s.cabinetId === cabinetId).length;
     };
 
@@ -146,7 +146,7 @@ const Shelves: React.FC = () => {
                                     value={name}
                                     onChange={(e) => setName(e.target.value)}
                                     className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="Shelves 1"
+                                    placeholder="Shelf 1"
                                 />
                             </div>
                             <div className="grid grid-cols-4 items-center gap-4">
@@ -170,7 +170,7 @@ const Shelves: React.FC = () => {
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="Meeting area..."
+                                    placeholder="Main storage shelf..."
                                 />
                             </div>
                         </div>

@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   Package,
+  Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -20,9 +21,9 @@ interface AppLayoutProps {
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/shelves', label: 'Shelves', icon: Layers },
   { path: '/cabinets', label: 'Cabinets', icon: Package },
-  { path: '/shelves', label: 'Shelves', icon: FolderPlus },
-  { path: '/folders', label: 'Folders', icon: FileText },
+  { path: '/folders', label: 'Folders', icon: FolderPlus },
   { path: '/procurement/add', label: 'Add Procurement', icon: FilePlus },
   { path: '/procurement/list', label: 'Records', icon: FileText },
 ];

@@ -66,9 +66,9 @@ import * as XLSX from 'xlsx';
 const ProcurementList: React.FC = () => {
     const [procurements, setProcurements] = useState<Procurement[]>([]);
 
-    // Location Data
-    const [cabinets, setCabinets] = useState<Cabinet[]>([]);
-    const [shelves, setShelves] = useState<Shelf[]>([]);
+    // Location Data - Note: cabinets table stores Shelves (Tier 1), shelves table stores Cabinets (Tier 2)
+    const [cabinets, setCabinets] = useState<Cabinet[]>([]); // These are actually Shelves (Tier 1)
+    const [shelves, setShelves] = useState<Shelf[]>([]); // These are actually Cabinets (Tier 2)
     const [folders, setFolders] = useState<Folder[]>([]);
 
     const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -166,7 +166,6 @@ const ProcurementList: React.FC = () => {
 
     const handleEdit = (procurement: Procurement) => {
         setEditingProcurement(procurement);
-        // Initialize available options for the selected location (simulated for now, could be improved)
         setIsEditDialogOpen(true);
     };
 
@@ -186,32 +185,38 @@ const ProcurementList: React.FC = () => {
     const handleDelete = () => {
         if (deleteId) {
             deleteProcurement(deleteId);
-            loadData();
             toast.success('Record deleted successfully');
             setDeleteId(null);
         }
     };
 
+    // Updated to show: Shelf-Cabinet-Folder (S1-C1-F1)
     const getLocationString = (p: Procurement) => {
-        const cabinet = cabinets.find(c => c.id === p.cabinetId)?.code || '?';
-        const shelf = shelves.find(s => s.id === p.shelfId)?.code || '?';
-        const folder = folders.find(f => f.id === p.folderId)?.code || '?';
-        return `${cabinet}-${shelf}-${folder}`;
+        const shelf = cabinets.find(c => c.id === p.cabinetId)?.code || '?'; // cabinetId points to Shelf (Tier 1)
+        const cabinet = shelves.find(s => s.id === p.shelfId)?.code || '?'; // shelfId points to Cabinet (Tier 2)
+        const folder = folders.find(f => f.id === p.folderId)?.code || '?'; // folderId points to Folder (Tier 3)
+        return `${shelf}-${cabinet}-${folder}`;
     };
 
     const exportToCSV = () => {
-        const exportData = filteredProcurements.map(p => ({
-            'PR Number': p.prNumber,
-            'Description': p.description,
-            'Location': getLocationString(p),
-            'Cabinet': cabinets.find(c => c.id === p.cabinetId)?.name || '',
-            'Shelf': shelves.find(s => s.id === p.shelfId)?.name || '',
-            'Folder': folders.find(f => f.id === p.folderId)?.name || '',
-            'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
-            'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
-            'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
-            'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
-        }));
+        const exportData = filteredProcurements.map(p => {
+            const shelf = cabinets.find(c => c.id === p.cabinetId);
+            const cabinet = shelves.find(s => s.id === p.shelfId);
+            const folder = folders.find(f => f.id === p.folderId);
+            
+            return {
+                'PR Number': p.prNumber,
+                'Description': p.description,
+                'Location': getLocationString(p),
+                'Shelf': shelf?.name || '',
+                'Cabinet': cabinet?.name || '',
+                'Folder': folder?.name || '',
+                'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
+                'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
+                'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
+                'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
+            };
+        });
 
         const ws = XLSX.utils.json_to_sheet(exportData);
         const csv = XLSX.utils.sheet_to_csv(ws);
@@ -224,18 +229,24 @@ const ProcurementList: React.FC = () => {
     };
 
     const exportToExcel = () => {
-        const exportData = filteredProcurements.map(p => ({
-            'PR Number': p.prNumber,
-            'Description': p.description,
-            'Location': getLocationString(p),
-            'Cabinet': cabinets.find(c => c.id === p.cabinetId)?.name || '',
-            'Shelf': shelves.find(s => s.id === p.shelfId)?.name || '',
-            'Folder': folders.find(f => f.id === p.folderId)?.name || '',
-            'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
-            'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
-            'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
-            'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
-        }));
+        const exportData = filteredProcurements.map(p => {
+            const shelf = cabinets.find(c => c.id === p.cabinetId);
+            const cabinet = shelves.find(s => s.id === p.shelfId);
+            const folder = folders.find(f => f.id === p.folderId);
+            
+            return {
+                'PR Number': p.prNumber,
+                'Description': p.description,
+                'Location': getLocationString(p),
+                'Shelf': shelf?.name || '',
+                'Cabinet': cabinet?.name || '',
+                'Folder': folder?.name || '',
+                'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
+                'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
+                'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
+                'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
+            };
+        });
 
         const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
@@ -296,10 +307,10 @@ const ProcurementList: React.FC = () => {
                                     onValueChange={(value) => setFilters({ ...filters, cabinetId: value })}
                                 >
                                     <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
-                                        <SelectValue placeholder="Cabinet" />
+                                        <SelectValue placeholder="Shelf" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectItem value="all_cabinets">All Cabinets</SelectItem>
+                                        <SelectItem value="all_cabinets">All Shelves</SelectItem>
                                         {cabinets.map((c) => (
                                             <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
                                         ))}
@@ -497,11 +508,12 @@ const ProcurementList: React.FC = () => {
 
                             <div className="space-y-2 border-t border-slate-800 pt-4">
                                 <Label className="text-lg font-semibold text-white">Location</Label>
+                                <p className="text-xs text-slate-400">Shelf → Cabinet → Folder</p>
                             </div>
 
                             <div className="grid grid-cols-3 gap-4">
                                 <div className="space-y-2">
-                                    <Label className="text-slate-300">Cabinet</Label>
+                                    <Label className="text-slate-300">Shelf</Label>
                                     <Select
                                         value={editingProcurement.cabinetId}
                                         onValueChange={(val) => setEditingProcurement({
@@ -523,7 +535,7 @@ const ProcurementList: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-slate-300">Shelf</Label>
+                                    <Label className="text-slate-300">Cabinet</Label>
                                     <Select
                                         value={editingProcurement.shelfId}
                                         onValueChange={(val) => setEditingProcurement({

@@ -32,53 +32,54 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { getShelves, onShelvesChange, onCabinetsChange, getCabinets } from '@/lib/storage'; // Changed: getShelves instead of getCabinets
-import { Shelf, Cabinet } from '@/types/procurement'; // Changed: Shelf instead of Cabinet
+import { getShelves, onShelvesChange, onCabinetsChange, onFoldersChange } from '@/lib/storage';
+import { Shelf, Cabinet, Folder } from '@/types/procurement';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, FolderPlus } from 'lucide-react';
 
 const Cabinets: React.FC = () => {
-    const [shelves, setShelves] = useState<Shelf[]>([]); // Changed: shelves (the data to display)
-    const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Changed: cabinets (parent data)
-    const [folders, setFolders] = useState<any[]>([]); // To count folders
+    const [shelves, setShelves] = useState<Shelf[]>([]);
+    const [cabinets, setCabinets] = useState<Cabinet[]>([]);
+    const [folders, setFolders] = useState<Folder[]>([]);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [currentShelf, setCurrentShelf] = useState<Shelf | null>(null); // Changed
+    const [currentShelf, setCurrentShelf] = useState<Shelf | null>(null);
 
     // Form State
     const [name, setName] = useState('');
     const [code, setCode] = useState('');
-    const [cabinetId, setCabinetId] = useState(''); // Added: parent selection
+    const [cabinetId, setCabinetId] = useState('');
     const [description, setDescription] = useState('');
 
     useEffect(() => {
         // Subscribe to real-time updates
-        const unsubShelves = onShelvesChange(setShelves); // Changed
-        const unsubCabinets = onCabinetsChange(setCabinets); // Changed
+        const unsubShelves = onShelvesChange(setShelves);
+        const unsubCabinets = onCabinetsChange(setCabinets);
+        const unsubFolders = onFoldersChange(setFolders);
         return () => {
             unsubShelves();
             unsubCabinets();
+            unsubFolders();
         };
     }, []);
 
     const resetForm = () => {
         setName('');
         setCode('');
-        setCabinetId(''); // Added
+        setCabinetId('');
         setDescription('');
-        setCurrentShelf(null); // Changed
+        setCurrentShelf(null);
     };
 
     const handleAdd = async () => {
-        if (!name || !code || !cabinetId) { // Changed: added cabinetId
-            toast.error('Name, Code, and Cabinet are required');
+        if (!name || !code || !cabinetId) {
+            toast.error('Name, Code, and Shelf are required');
             return;
         }
 
         try {
-            // Import addShelf from storage
             const { addShelf } = await import('@/lib/storage');
-            await addShelf(cabinetId, name, code, description); // Changed
+            await addShelf(cabinetId, name, code, description);
             setIsAddDialogOpen(false);
             resetForm();
             toast.success('Cabinet added successfully');
@@ -87,21 +88,21 @@ const Cabinets: React.FC = () => {
         }
     };
 
-    const handleEditClick = (shelf: Shelf) => { // Changed parameter
-        setCurrentShelf(shelf); // Changed
+    const handleEditClick = (shelf: Shelf) => {
+        setCurrentShelf(shelf);
         setName(shelf.name);
         setCode(shelf.code);
-        setCabinetId(shelf.cabinetId); // Added
+        setCabinetId(shelf.cabinetId);
         setDescription(shelf.description || '');
         setIsEditDialogOpen(true);
     };
 
     const handleUpdate = async () => {
-        if (!currentShelf || !name || !code || !cabinetId) return; // Changed
+        if (!currentShelf || !name || !code || !cabinetId) return;
 
         try {
             const { updateShelf } = await import('@/lib/storage');
-            await updateShelf(currentShelf.id, { cabinetId, name, code, description }); // Changed
+            await updateShelf(currentShelf.id, { cabinetId, name, code, description });
             setIsEditDialogOpen(false);
             resetForm();
             toast.success('Cabinet updated successfully');
@@ -113,18 +114,18 @@ const Cabinets: React.FC = () => {
     const handleDelete = async (id: string) => {
         try {
             const { deleteShelf } = await import('@/lib/storage');
-            await deleteShelf(id); // Changed
+            await deleteShelf(id);
             toast.success('Cabinet deleted successfully');
         } catch (error) {
             toast.error('Failed to delete cabinet');
         }
     };
 
-    const getCabinetName = (id: string) => { // Added
+    const getShelfName = (id: string) => {
         return cabinets.find(c => c.id === id)?.name || 'Unknown';
     };
 
-    const getFolderCount = (shelfId: string) => { // Added
+    const getFolderCount = (shelfId: string) => {
         return folders.filter(f => f.shelfId === shelfId).length;
     };
 
@@ -132,7 +133,7 @@ const Cabinets: React.FC = () => {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-white">Cabinet</h1>
+                    <h1 className="text-3xl font-bold text-white">Cabinets</h1>
                     <p className="text-slate-400 mt-1">Manage cabinets within shelves (Tier 2)</p>
                 </div>
                 <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -171,7 +172,7 @@ const Cabinets: React.FC = () => {
                                     value={name}
                                     onChange={(e) => setName(e.target.value)}
                                     className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="S1-Cabinet 1"
+                                    placeholder="Cabinet 1"
                                 />
                             </div>
                             <div className="grid grid-cols-4 items-center gap-4">
@@ -241,7 +242,7 @@ const Cabinets: React.FC = () => {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-slate-300">
-                                            {getCabinetName(shelf.cabinetId)}
+                                            {getShelfName(shelf.cabinetId)}
                                         </TableCell>
                                         <TableCell>
                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
