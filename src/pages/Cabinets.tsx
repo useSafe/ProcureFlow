@@ -127,7 +127,7 @@ const Cabinets: React.FC = () => {
                 <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
                         <Button className="bg-blue-600 hover:bg-blue-700">
-                            <Plus className="mr-2 h-4 w-4" /> Add Cabinet
+                            <Plus className="mr-2 h-4 w-4" /> Add Shelves
                         </Button>
                     </DialogTrigger>
                     <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
