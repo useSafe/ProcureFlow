@@ -88,7 +88,7 @@ const AddProcurement: React.FC = () => {
         setIsLoading(true);
 
         try {
-            await addProcurement({
+            const procurementData: any = {
                 prNumber,
                 description,
                 cabinetId,
@@ -98,8 +98,12 @@ const AddProcurement: React.FC = () => {
                 urgencyLevel: 'medium', // Default value
                 dateAdded: date ? date.toISOString() : new Date().toISOString(),
                 tags: [], // Empty array
-                notes: undefined,
-            });
+            };
+
+            // Only add notes if it has a value
+            // Don't include it at all if undefined to avoid Firestore errors
+
+            await addProcurement(procurementData);
 
             toast.success('File record added successfully');
             navigate('/dashboard');
