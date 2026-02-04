@@ -212,7 +212,6 @@ const ProcurementList: React.FC = () => {
                 'Cabinet': cabinet?.name || '',
                 'Folder': folder?.name || '',
                 'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
-                'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
                 'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
                 'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
             };
@@ -242,7 +241,6 @@ const ProcurementList: React.FC = () => {
                 'Cabinet': cabinet?.name || '',
                 'Folder': folder?.name || '',
                 'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
-                'Urgency': p.urgencyLevel.charAt(0).toUpperCase() + p.urgencyLevel.slice(1),
                 'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
                 'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
             };
