@@ -32,49 +32,53 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { getCabinets, addCabinet, updateCabinet, deleteCabinet, onCabinetsChange, onShelvesChange, getShelves } from '@/lib/storage';
-import { Cabinet, Shelf } from '@/types/procurement';
+import { getShelves, onShelvesChange, onCabinetsChange, getCabinets } from '@/lib/storage'; // Changed: getShelves instead of getCabinets
+import { Shelf, Cabinet } from '@/types/procurement'; // Changed: Shelf instead of Cabinet
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, FolderPlus } from 'lucide-react';
 
 const Cabinets: React.FC = () => {
-    const [cabinets, setCabinets] = useState<Cabinet[]>([]);
-    const [shelves, setShelves] = useState<Shelf[]>([]); // To count shelves
+    const [shelves, setShelves] = useState<Shelf[]>([]); // Changed: shelves (the data to display)
+    const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Changed: cabinets (parent data)
+    const [folders, setFolders] = useState<any[]>([]); // To count folders
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [currentCabinet, setCurrentCabinet] = useState<Cabinet | null>(null);
+    const [currentShelf, setCurrentShelf] = useState<Shelf | null>(null); // Changed
 
     // Form State
     const [name, setName] = useState('');
     const [code, setCode] = useState('');
+    const [cabinetId, setCabinetId] = useState(''); // Added: parent selection
     const [description, setDescription] = useState('');
 
     useEffect(() => {
         // Subscribe to real-time updates
-        const unsubCabinets = onCabinetsChange(setCabinets);
-        const unsubShelves = onShelvesChange(setShelves);
+        const unsubShelves = onShelvesChange(setShelves); // Changed
+        const unsubCabinets = onCabinetsChange(setCabinets); // Changed
         return () => {
-            unsubCabinets();
             unsubShelves();
+            unsubCabinets();
         };
     }, []);
 
     const resetForm = () => {
         setName('');
         setCode('');
+        setCabinetId(''); // Added
         setDescription('');
-        setCurrentCabinet(null);
+        setCurrentShelf(null); // Changed
     };
 
     const handleAdd = async () => {
-        if (!name || !code) {
-            toast.error('Name and Code are required');
+        if (!name || !code || !cabinetId) { // Changed: added cabinetId
+            toast.error('Name, Code, and Cabinet are required');
             return;
         }
 
         try {
-            await addCabinet(name, code, description);
-            // No need to loadData(), subscription handles it
+            // Import addShelf from storage
+            const { addShelf } = await import('@/lib/storage');
+            await addShelf(cabinetId, name, code, description); // Changed
             setIsAddDialogOpen(false);
             resetForm();
             toast.success('Cabinet added successfully');
@@ -83,19 +87,21 @@ const Cabinets: React.FC = () => {
         }
     };
 
-    const handleEditClick = (cabinet: Cabinet) => {
-        setCurrentCabinet(cabinet);
-        setName(cabinet.name);
-        setCode(cabinet.code);
-        setDescription(cabinet.description || '');
+    const handleEditClick = (shelf: Shelf) => { // Changed parameter
+        setCurrentShelf(shelf); // Changed
+        setName(shelf.name);
+        setCode(shelf.code);
+        setCabinetId(shelf.cabinetId); // Added
+        setDescription(shelf.description || '');
         setIsEditDialogOpen(true);
     };
 
     const handleUpdate = async () => {
-        if (!currentCabinet || !name || !code) return;
+        if (!currentShelf || !name || !code || !cabinetId) return; // Changed
 
         try {
-            await updateCabinet(currentCabinet.id, { name, code, description });
+            const { updateShelf } = await import('@/lib/storage');
+            await updateShelf(currentShelf.id, { cabinetId, name, code, description }); // Changed
             setIsEditDialogOpen(false);
             resetForm();
             toast.success('Cabinet updated successfully');
@@ -106,38 +112,56 @@ const Cabinets: React.FC = () => {
 
     const handleDelete = async (id: string) => {
         try {
-            await deleteCabinet(id);
+            const { deleteShelf } = await import('@/lib/storage');
+            await deleteShelf(id); // Changed
             toast.success('Cabinet deleted successfully');
         } catch (error) {
             toast.error('Failed to delete cabinet');
         }
     };
 
-    const getShelfCount = (cabinetId: string) => {
-        return shelves.filter(s => s.cabinetId === cabinetId).length;
+    const getCabinetName = (id: string) => { // Added
+        return cabinets.find(c => c.id === id)?.name || 'Unknown';
+    };
+
+    const getFolderCount = (shelfId: string) => { // Added
+        return folders.filter(f => f.shelfId === shelfId).length;
     };
 
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-white">Cabinets</h1>
-                    <p className="text-slate-400 mt-1">Manage physical storage cabinets (Tier 1)</p>
+                    <h1 className="text-3xl font-bold text-white">Cabinet</h1>
+                    <p className="text-slate-400 mt-1">Manage cabinets within shelves (Tier 2)</p>
                 </div>
                 <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
                         <Button className="bg-blue-600 hover:bg-blue-700">
-                            <Plus className="mr-2 h-4 w-4" /> Add Shelves
+                            <Plus className="mr-2 h-4 w-4" /> Add Cabinet
                         </Button>
                     </DialogTrigger>
                     <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
                         <DialogHeader>
                             <DialogTitle>Add New Cabinet</DialogTitle>
                             <DialogDescription className="text-slate-400">
-                                Create a new top-level storage unit.
+                                Create a new cabinet inside a shelf.
                             </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label className="text-right text-slate-300">Parent Shelf</Label>
+                                <select
+                                    value={cabinetId}
+                                    onChange={(e) => setCabinetId(e.target.value)}
+                                    className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                                >
+                                    <option value="">Select Shelf</option>
+                                    {cabinets.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                    ))}
+                                </select>
+                            </div>
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <Label htmlFor="name" className="text-right text-slate-300">
                                     Name
@@ -147,7 +171,7 @@ const Cabinets: React.FC = () => {
                                     value={name}
                                     onChange={(e) => setName(e.target.value)}
                                     className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="Inventory Cabinet A"
+                                    placeholder="S1-Cabinet 1"
                                 />
                             </div>
                             <div className="grid grid-cols-4 items-center gap-4">
@@ -171,7 +195,7 @@ const Cabinets: React.FC = () => {
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="located in main hall..."
+                                    placeholder="Description..."
                                 />
                             </div>
                         </div>
@@ -189,46 +213,50 @@ const Cabinets: React.FC = () => {
                         <TableHeader>
                             <TableRow className="border-slate-800 hover:bg-transparent">
                                 <TableHead className="text-slate-300">Details</TableHead>
+                                <TableHead className="text-slate-300">Parent Shelf</TableHead>
                                 <TableHead className="text-slate-300">Code</TableHead>
-                                <TableHead className="text-slate-300">Shelves</TableHead>
+                                <TableHead className="text-slate-300">Folders</TableHead>
                                 <TableHead className="text-right text-slate-300">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {cabinets.length === 0 ? (
+                            {shelves.length === 0 ? (
                                 <TableRow className="border-slate-800">
-                                    <TableCell colSpan={4} className="h-24 text-center text-slate-500">
+                                    <TableCell colSpan={5} className="h-24 text-center text-slate-500">
                                         No cabinets found. Add your first cabinet.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                cabinets.map((cabinet) => (
-                                    <TableRow key={cabinet.id} className="border-slate-800 hover:bg-[#1e293b]">
+                                shelves.map((shelf) => (
+                                    <TableRow key={shelf.id} className="border-slate-800 hover:bg-[#1e293b]">
                                         <TableCell>
                                             <div className="flex items-center gap-3">
-                                                <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
-                                                    <Package className="h-5 w-5" />
+                                                <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                                    <FolderPlus className="h-5 w-5" />
                                                 </div>
                                                 <div>
-                                                    <p className="font-medium text-white">{cabinet.name}</p>
-                                                    <p className="text-xs text-slate-400">{cabinet.description || 'No description'}</p>
+                                                    <p className="font-medium text-white">{shelf.name}</p>
+                                                    <p className="text-xs text-slate-400">{shelf.description || 'No description'}</p>
                                                 </div>
                                             </div>
                                         </TableCell>
+                                        <TableCell className="text-slate-300">
+                                            {getCabinetName(shelf.cabinetId)}
+                                        </TableCell>
                                         <TableCell>
                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
-                                                {cabinet.code}
+                                                {shelf.code}
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-slate-300">
-                                            {getShelfCount(cabinet.id)} shelves
+                                            {getFolderCount(shelf.id)} folders
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    onClick={() => handleEditClick(cabinet)}
+                                                    onClick={() => handleEditClick(shelf)}
                                                     className="h-8 w-8 text-slate-400 hover:text-white hover:bg-slate-700"
                                                 >
                                                     <Pencil className="h-4 w-4" />
@@ -247,13 +275,13 @@ const Cabinets: React.FC = () => {
                                                         <AlertDialogHeader>
                                                             <AlertDialogTitle>Delete Cabinet?</AlertDialogTitle>
                                                             <AlertDialogDescription className="text-slate-400">
-                                                                This will permanently delete <strong>{cabinet.name}</strong> and all its contents (Shelves, Folders). This action cannot be undone.
+                                                                This will permanently delete <strong>{shelf.name}</strong> and all folders inside it.
                                                             </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
-                                                                onClick={() => handleDelete(cabinet.id)}
+                                                                onClick={() => handleDelete(shelf.id)}
                                                                 className="bg-red-600 hover:bg-red-700 text-white"
                                                             >
                                                                 Delete
@@ -278,6 +306,19 @@ const Cabinets: React.FC = () => {
                         <DialogTitle>Edit Cabinet</DialogTitle>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right text-slate-300">Parent Shelf</Label>
+                            <select
+                                value={cabinetId}
+                                onChange={(e) => setCabinetId(e.target.value)}
+                                className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                            >
+                                <option value="">Select Shelf</option>
+                                {cabinets.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                ))}
+                            </select>
+                        </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label htmlFor="edit-name" className="text-right text-slate-300">
                                 Name
