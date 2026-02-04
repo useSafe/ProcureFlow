@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useAuth } from '@/contexts/AuthContext';
 import {
     Table,
     TableBody,
@@ -61,9 +62,13 @@ import {
     Download
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Checkbox } from '@/components/ui/checkbox';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const ProcurementList: React.FC = () => {
+    const { user } = useAuth();
     const [procurements, setProcurements] = useState<Procurement[]>([]);
 
     // Location Data - Note: cabinets table stores Shelves (Tier 1), shelves table stores Cabinets (Tier 2)
@@ -75,6 +80,10 @@ const ProcurementList: React.FC = () => {
     const [currentPage, setCurrentPage] = useState(1);
     const [editingProcurement, setEditingProcurement] = useState<Procurement | null>(null);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+
+    // Bulk Selection
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
 
     // Dynamic Edit Form Data
     const [editAvailableShelves, setEditAvailableShelves] = useState<Shelf[]>([]);
@@ -173,7 +182,12 @@ const ProcurementList: React.FC = () => {
         if (!editingProcurement) return;
 
         try {
-            await updateProcurement(editingProcurement.id, editingProcurement);
+            await updateProcurement(
+                editingProcurement.id,
+                editingProcurement,
+                user?.email,
+                user?.name
+            );
             setIsEditDialogOpen(false);
             setEditingProcurement(null);
             toast.success('Record updated successfully');
@@ -203,7 +217,7 @@ const ProcurementList: React.FC = () => {
             const shelf = cabinets.find(c => c.id === p.cabinetId);
             const cabinet = shelves.find(s => s.id === p.shelfId);
             const folder = folders.find(f => f.id === p.folderId);
-            
+
             return {
                 'PR Number': p.prNumber,
                 'Description': p.description,
@@ -227,30 +241,148 @@ const ProcurementList: React.FC = () => {
         toast.success('Exported to CSV successfully');
     };
 
-    const exportToExcel = () => {
-        const exportData = filteredProcurements.map(p => {
-            const shelf = cabinets.find(c => c.id === p.cabinetId);
-            const cabinet = shelves.find(s => s.id === p.shelfId);
-            const folder = folders.find(f => f.id === p.folderId);
-            
-            return {
-                'PR Number': p.prNumber,
-                'Description': p.description,
-                'Location': getLocationString(p),
-                'Shelf': shelf?.name || '',
-                'Cabinet': cabinet?.name || '',
-                'Folder': folder?.name || '',
-                'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
-                'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
-                'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
-            };
-        });
+    const handleExportExcel = () => {
+        const exportData = filteredProcurements.map(p => ({
+            'PR Number': p.prNumber,
+            'Description': p.description,
+            'Location': getLocationString(p),
+            'Status': p.status,
+            'Urgency': p.urgencyLevel,
+            'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
+            'Tags': p.tags.join(', '),
+            'Notes': p.notes || '',
+        }));
 
         const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Procurement Records');
-        XLSX.writeFile(wb, `procurement_records_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
-        toast.success('Exported to Excel successfully');
+        XLSX.utils.book_append_sheet(wb, ws, 'Procurements');
+
+        // Generate filename with current date
+        const filename = `procurement-records-${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        toast.success('Excel file exported successfully');
+    };
+
+    const handleExportPDFSummary = () => {
+        const doc = new jsPDF();
+
+        // Title
+        doc.setFontSize(18);
+        doc.text('Procurement Records - Summary Report', 14, 20);
+
+        // Date
+        doc.setFontSize(10);
+        doc.text(`Generated: ${format(new Date(), 'MMMM d, yyyy - hh:mm a')}`, 14, 28);
+
+        // Summary data
+        const summaryData = filteredProcurements.map(p => [
+            p.prNumber,
+            p.description.substring(0, 40) + (p.description.length > 40 ? '...' : ''),
+            getLocationString(p),
+            p.status,
+            format(new Date(p.dateAdded), 'MMM d, yyyy')
+        ]);
+
+        autoTable(doc, {
+            head: [['PR Number', 'Description', 'Location', 'Status', 'Date Added']],
+            body: summaryData,
+            startY: 35,
+            theme: 'grid',
+            headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+            styles: { fontSize: 9 },
+        });
+
+        doc.save(`procurement-summary-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+        toast.success('PDF summary exported successfully');
+    };
+
+    const handleExportPDFFull = () => {
+        const doc = new jsPDF();
+
+        // Title
+        doc.setFontSize(18);
+        doc.text('Procurement Records - Full Report', 14, 20);
+
+        // Date
+        doc.setFontSize(10);
+        doc.text(`Generated: ${format(new Date(), 'MMMM d, yyyy - hh:mm a')}`, 14, 28);
+
+        // Full data
+        const fullData = filteredProcurements.map(p => [
+            p.prNumber,
+            p.description.substring(0, 30) + (p.description.length > 30 ? '...' : ''),
+            getLocationString(p),
+            p.status,
+            p.urgencyLevel,
+            format(new Date(p.dateAdded), 'MMM d, yyyy'),
+            p.tags.join(', ').substring(0, 20),
+            p.createdByName || 'N/A'
+        ]);
+
+        autoTable(doc, {
+            head: [['PR #', 'Description', 'Location', 'Status', 'Urgency', 'Date', 'Tags', 'Created By']],
+            body: fullData,
+            startY: 35,
+            theme: 'grid',
+            headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+            styles: { fontSize: 8 },
+        });
+
+        doc.save(`procurement-full-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+        toast.success('PDF full report exported successfully');
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!deleteId) return;
+
+        try {
+            await deleteProcurement(deleteId);
+            toast.success('Record deleted successfully');
+            setDeleteId(null);
+            // Remove from selection if it was selected
+            if (selectedIds.includes(deleteId)) {
+                setSelectedIds(prev => prev.filter(id => id !== deleteId));
+            }
+        } catch (error) {
+            toast.error('Failed to delete record');
+        }
+    };
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) {
+            const currentIds = paginatedProcurements.map(p => p.id);
+            setSelectedIds(prev => Array.from(new Set([...prev, ...currentIds])));
+        } else {
+            const currentIds = paginatedProcurements.map(p => p.id);
+            setSelectedIds(prev => prev.filter(id => !currentIds.includes(id)));
+        }
+    };
+
+    const handleSelectOne = (id: string, checked: boolean) => {
+        if (checked) {
+            setSelectedIds(prev => [...prev, id]);
+        } else {
+            setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        try {
+            // Delete all selected records
+            // In a real app, this should be a batch operation or use Promise.all
+            // For now, we'll iterate
+            await Promise.all(selectedIds.map(id => deleteProcurement(id)));
+
+            toast.success(`${selectedIds.length} records deleted successfully`);
+            setSelectedIds([]);
+            setIsBulkDeleteDialogOpen(false);
+        } catch (error) {
+            console.error('Bulk delete error:', error);
+            toast.error('Failed to delete some records');
+        }
     };
 
     return (
@@ -258,32 +390,60 @@ const ProcurementList: React.FC = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-white">Records</h1>
+
                     <p className="text-slate-400 mt-1">View and manage file tracking records</p>
                 </div>
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button className="bg-emerald-600 hover:bg-emerald-700">
-                            <Download className="mr-2 h-4 w-4" />
-                            Export
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="bg-[#1e293b] border-slate-700 text-white">
-                        <DropdownMenuItem
-                            onClick={exportToCSV}
-                            className="cursor-pointer focus:bg-slate-700"
-                        >
-                            <FileText className="mr-2 h-4 w-4" />
-                            Export as CSV
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            onClick={exportToExcel}
-                            className="cursor-pointer focus:bg-slate-700"
-                        >
-                            <FileText className="mr-2 h-4 w-4" />
-                            Export as Excel
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+
+                <div className="flex gap-2">
+                    {selectedIds.length > 0 && (
+                        <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
+                            <AlertDialogTrigger asChild>
+                                <Button variant="destructive" className="bg-red-600 hover:bg-red-700">
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete Selected ({selectedIds.length})
+                                </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent className="bg-[#1e293b] border-slate-800 text-white">
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete {selectedIds.length} Records?</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-slate-400">
+                                        This action cannot be undone. This will permanently delete the selected procurement records.
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700 text-white">Delete All</AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                        </AlertDialog>
+                    )}
+
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button className="bg-emerald-600 hover:bg-emerald-700">
+                                <Download className="mr-2 h-4 w-4" />
+                                Export
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-[#1e293b] border-slate-700 text-white">
+                            <DropdownMenuItem
+                                onClick={exportToCSV}
+                                className="cursor-pointer focus:bg-slate-700"
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                Export as CSV
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={handleExportExcel}
+                                className="cursor-pointer focus:bg-slate-700"
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                Export as Excel
+                            </DropdownMenuItem>
+
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
             </div>
 
             <Card className="border-none bg-[#0f172a] shadow-lg">
@@ -345,10 +505,17 @@ const ProcurementList: React.FC = () => {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <div className="rounded-md border border-slate-800">
+                    <div className="rounded-md border border-slate-800 overflow-x-auto">
                         <Table>
                             <TableHeader>
                                 <TableRow className="border-slate-800 hover:bg-transparent">
+                                    <TableHead className="w-[50px]">
+                                        <Checkbox
+                                            checked={paginatedProcurements.length > 0 && paginatedProcurements.every(p => selectedIds.includes(p.id))}
+                                            onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                                            className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                        />
+                                    </TableHead>
                                     <TableHead className="text-slate-300">PR Number</TableHead>
                                     <TableHead className="text-slate-300">Description</TableHead>
                                     <TableHead className="text-slate-300">Location</TableHead>
@@ -360,13 +527,20 @@ const ProcurementList: React.FC = () => {
                             <TableBody>
                                 {paginatedProcurements.length === 0 ? (
                                     <TableRow className="border-slate-800">
-                                        <TableCell colSpan={6} className="h-24 text-center text-slate-500">
+                                        <TableCell colSpan={7} className="h-24 text-center text-slate-500">
                                             No records found.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
                                     paginatedProcurements.map((procurement) => (
                                         <TableRow key={procurement.id} className="border-slate-800 hover:bg-[#1e293b]">
+                                            <TableCell>
+                                                <Checkbox
+                                                    checked={selectedIds.includes(procurement.id)}
+                                                    onCheckedChange={(checked) => handleSelectOne(procurement.id, checked as boolean)}
+                                                    className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                                />
+                                            </TableCell>
                                             <TableCell className="font-medium text-white">
                                                 {procurement.prNumber}
                                             </TableCell>
@@ -573,7 +747,7 @@ const ProcurementList: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4 border-t border-slate-800 pt-4">
+                            <div className="border-t border-slate-800 pt-4">
                                 <div className="space-y-2">
                                     <Label className="text-slate-300">Status</Label>
                                     <Select
@@ -589,23 +763,51 @@ const ProcurementList: React.FC = () => {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Urgency</Label>
-                                    <Select
-                                        value={editingProcurement.urgencyLevel}
-                                        onValueChange={(val) => setEditingProcurement({ ...editingProcurement, urgencyLevel: val as UrgencyLevel })}
-                                    >
-                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="low">Low</SelectItem>
-                                            <SelectItem value="medium">Medium</SelectItem>
-                                            <SelectItem value="high">High</SelectItem>
-                                            <SelectItem value="critical">Critical</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                            </div>
+
+                            {/* Record History Section */}
+                            <div className="space-y-4 border-t border-slate-800 pt-4">
+                                <Label className="text-lg font-semibold text-white">Record History</Label>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Created By</Label>
+                                        <Input
+                                            value={`${editingProcurement.createdByName || 'Unknown'} (${editingProcurement.createdBy || 'N/A'})`}
+                                            disabled
+                                            className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Created At</Label>
+                                        <Input
+                                            value={format(new Date(editingProcurement.createdAt), 'MMMM d, yyyy - hh:mm a')}
+                                            disabled
+                                            className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                        />
+                                    </div>
                                 </div>
+
+                                {editingProcurement.editedBy && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label className="text-slate-300">Last Edited By</Label>
+                                            <Input
+                                                value={`${editingProcurement.editedByName || 'Unknown'} (${editingProcurement.editedBy})`}
+                                                disabled
+                                                className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-slate-300">Last Edited At</Label>
+                                            <Input
+                                                value={editingProcurement.lastEditedAt ? format(new Date(editingProcurement.lastEditedAt), 'MMMM d, yyyy - hh:mm a') : 'N/A'}
+                                                disabled
+                                                className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

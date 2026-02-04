@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import AppLayout from "@/components/layout/AppLayout";
 import Login from "@/pages/Login";
+import Register from "@/pages/Register";
 import Dashboard from "@/pages/Dashboard";
 import Cabinets from "@/pages/Cabinets";
 import Shelves from "@/pages/Shelves";
@@ -27,9 +28,14 @@ const AppRoutes = () => {
         element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />}
       />
       <Route
+        path="/register"
+        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Register />}
+      />
+      <Route
         path="/"
         element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />}
       />
+
       <Route
         path="/dashboard"
         element={
@@ -41,25 +47,25 @@ const AppRoutes = () => {
         }
       />
       <Route
-  path="/cabinets"
-  element={
-    <ProtectedRoute>
-      <AppLayout>
-         <Cabinets /> {/* Changed from Cabinets */}
-      </AppLayout>
-    </ProtectedRoute>
-  }
-/>
-<Route
-  path="/shelves"
-  element={
-    <ProtectedRoute>
-      <AppLayout>
-        <Shelves />  {/* Changed from Shelves */}
-      </AppLayout>
-    </ProtectedRoute>
-  }
-/>
+        path="/cabinets"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Cabinets /> {/* Changed from Cabinets */}
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/shelves"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Shelves />  {/* Changed from Shelves */}
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/folders"
         element={

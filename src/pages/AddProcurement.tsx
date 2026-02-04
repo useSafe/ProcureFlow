@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +27,7 @@ import {
 
 const AddProcurement: React.FC = () => {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [isLoading, setIsLoading] = useState(false);
     const [cabinets, setCabinets] = useState<Cabinet[]>([]);
     const [shelves, setShelves] = useState<Shelf[]>([]);
@@ -103,7 +105,11 @@ const AddProcurement: React.FC = () => {
             // Only add notes if it has a value
             // Don't include it at all if undefined to avoid Firestore errors
 
-            await addProcurement(procurementData);
+            await addProcurement(
+                procurementData,
+                user?.email || 'unknown@example.com',
+                user?.name || 'Unknown User'
+            );
 
             toast.success('File record added successfully');
             navigate('/dashboard');
@@ -138,7 +144,7 @@ const AddProcurement: React.FC = () => {
                                     <div className="space-y-2">
                                         <Label className="text-slate-300">PR Number *</Label>
                                         <Input
-                                            placeholder="e.g. PR-2024-001"
+                                            placeholder="e.g., ABC-JAN-26-001"
                                             value={prNumber}
                                             onChange={(e) => setPrNumber(e.target.value)}
                                             className="bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"

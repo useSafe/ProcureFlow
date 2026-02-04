@@ -48,10 +48,18 @@ export interface Procurement {
     tags: string[];
     notes?: string;
 
+    // User tracking
+    createdBy: string; // User email
+    createdByName: string; // User display name
+    editedBy?: string; // User email of last editor
+    editedByName?: string; // User display name of last editor
+    lastEditedAt?: string; // ISO timestamp of last edit
+
     // Timestamps
     createdAt: string;
     updatedAt: string;
 }
+
 
 export interface User {
     id: string;

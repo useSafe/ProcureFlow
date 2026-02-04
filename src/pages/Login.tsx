@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +15,7 @@ const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -24,13 +25,13 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     const result = await login(email, password);
-    
+
     if (result.success) {
       navigate('/dashboard');
     } else {
       setError(result.error || 'Login failed');
     }
-    
+
     setIsLoading(false);
   };
 
@@ -56,27 +57,27 @@ const Login: React.FC = () => {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
-            
+
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@procurement.com"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={isLoading}
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <div className="relative">
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -101,7 +102,7 @@ const Login: React.FC = () => {
                 Min 8 chars, 1 uppercase, 1 number, 1 special character
               </p>
             </div>
-            
+
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (
                 <>
@@ -113,11 +114,19 @@ const Login: React.FC = () => {
               )}
             </Button>
 
+            <div className="text-center text-sm">
+              <span className="text-muted-foreground">Don't have an account? </span>
+              <Link to="/register" className="text-primary hover:underline font-medium">
+                Create Account
+              </Link>
+            </div>
+
             {/* <div className="mt-4 rounded-lg bg-muted p-4 text-sm">
               <p className="font-medium text-foreground">Demo Credentials:</p>
               <p className="text-muted-foreground">Email: admin@procurement.com</p>
               <p className="text-muted-foreground">Password: Admin@123</p>
             </div> */}
+
           </form>
         </CardContent>
       </Card>

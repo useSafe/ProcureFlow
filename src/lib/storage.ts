@@ -190,12 +190,18 @@ export const deleteFolder = async (id: string): Promise<void> => {
 };
 
 // --- Procurement ---
-export const addProcurement = async (procurement: Omit<Procurement, 'id' | 'createdAt' | 'updatedAt'>): Promise<Procurement> => {
+export const addProcurement = async (
+    procurement: Omit<Procurement, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'createdByName'>,
+    userEmail: string,
+    userName: string
+): Promise<Procurement> => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const newProcurement: Procurement = {
         ...procurement,
         id,
+        createdBy: userEmail,
+        createdByName: userName,
         createdAt: now,
         updatedAt: now,
     };
@@ -203,11 +209,24 @@ export const addProcurement = async (procurement: Omit<Procurement, 'id' | 'crea
     return newProcurement;
 };
 
-export const updateProcurement = async (id: string, updates: Partial<Procurement>): Promise<void> => {
-    const updatePayload = {
+export const updateProcurement = async (
+    id: string,
+    updates: Partial<Procurement>,
+    userEmail?: string,
+    userName?: string
+): Promise<void> => {
+    const updatePayload: any = {
         ...updates,
         updatedAt: new Date().toISOString()
     };
+
+    // Add editor information if user info is provided
+    if (userEmail && userName) {
+        updatePayload.editedBy = userEmail;
+        updatePayload.editedByName = userName;
+        updatePayload.lastEditedAt = new Date().toISOString();
+    }
+
     await update(ref(db, 'procurements/' + id), updatePayload);
 };
 
