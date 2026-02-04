@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { onProcurementsChange, onCabinetsChange } from '@/lib/storage'; // Updated imports
-import { Procurement, Cabinet } from '@/types/procurement';
-import { FileText, Archive, Clock, AlertTriangle, TrendingUp, FolderOpen } from 'lucide-react';
+import { onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange } from '@/lib/storage';
+import { Procurement, Cabinet, Shelf, Folder } from '@/types/procurement';
+import { FileText, Archive, Layers, Package, FolderOpen, Clock, TrendingUp } from 'lucide-react';
 import {
   ChartContainer,
   ChartTooltip,
@@ -12,32 +12,42 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, 
 
 const Dashboard: React.FC = () => {
   const [procurements, setProcurements] = useState<Procurement[]>([]);
-  const [cabinets, setCabinets] = useState<Cabinet[]>([]);
+  const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Shelves (Tier 1)
+  const [shelves, setShelves] = useState<Shelf[]>([]); // Cabinets (Tier 2)
+  const [folders, setFolders] = useState<Folder[]>([]); // Folders (Tier 3)
 
   useEffect(() => {
     const unsubProcurements = onProcurementsChange(setProcurements);
     const unsubCabinets = onCabinetsChange(setCabinets);
+    const unsubShelves = onShelvesChange(setShelves);
+    const unsubFolders = onFoldersChange(setFolders);
 
     return () => {
       unsubProcurements();
       unsubCabinets();
+      unsubShelves();
+      unsubFolders();
     };
   }, []);
 
   const metrics = useMemo(() => {
     return {
-      total: (procurements || []).length,
+      totalRecords: (procurements || []).length,
       active: (procurements || []).filter(p => p.status === 'active').length,
       archived: (procurements || []).filter(p => p.status === 'archived').length,
-      critical: (procurements || []).filter(p => p.urgencyLevel === 'critical').length,
+      totalShelves: cabinets.length,
+      totalCabinets: shelves.length,
+      totalFolders: folders.length,
     }
-  }, [procurements]);
+  }, [procurements, cabinets, shelves, folders]);
 
-  const locationStats = useMemo(() => {
-    return cabinets.map(c => ({
-      cabinetId: c.id,
-      cabinetName: c.name,
-      count: (procurements || []).filter(p => p.cabinetId === c.id).length
+  // Shelf statistics (cabinetId in procurement points to Shelf)
+  const shelfStats = useMemo(() => {
+    return cabinets.map(shelf => ({
+      id: shelf.id,
+      name: shelf.name,
+      code: shelf.code,
+      count: (procurements || []).filter(p => p.cabinetId === shelf.id).length
     })).filter(s => s.count > 0).sort((a, b) => b.count - a.count);
   }, [cabinets, procurements]);
 
@@ -46,8 +56,8 @@ const Dashboard: React.FC = () => {
     { name: 'Archived', value: metrics.archived, fill: '#64748b' },
   ];
 
-  // Top 5 cabinets
-  const topCabinets = locationStats.slice(0, 5);
+  // Top 5 shelves by record count
+  const topShelves = shelfStats.slice(0, 5);
 
   // Recent 5 activities
   const recentProcurements = [...(procurements || [])]
@@ -59,33 +69,62 @@ const Dashboard: React.FC = () => {
     archived: { label: 'Archived', color: '#64748b' },
   };
 
-  const metricCards = [
+  // Get location string helper
+  const getLocationString = (p: Procurement) => {
+    const shelf = cabinets.find(c => c.id === p.cabinetId)?.code || '?';
+    const cabinet = shelves.find(s => s.id === p.shelfId)?.code || '?';
+    const folder = folders.find(f => f.id === p.folderId)?.code || '?';
+    return `${shelf}-${cabinet}-${folder}`;
+  };
+
+  const summaryCards = [
     {
-      title: 'Total Files',
-      value: metrics.total,
-      icon: FileText,
+      title: 'Total Shelves',
+      value: metrics.totalShelves,
+      icon: Layers,
       bg: 'bg-blue-600',
-      text: 'text-white'
+      text: 'text-white',
+      description: 'Tier 1'
     },
     {
-      title: 'Active',
-      value: metrics.active,
+      title: 'Total Cabinets',
+      value: metrics.totalCabinets,
+      icon: Package,
+      bg: 'bg-purple-600',
+      text: 'text-white',
+      description: 'Tier 2'
+    },
+    {
+      title: 'Total Folders',
+      value: metrics.totalFolders,
       icon: FolderOpen,
+      bg: 'bg-amber-600',
+      text: 'text-white',
+      description: 'Tier 3'
+    },
+    {
+      title: 'Total Records',
+      value: metrics.totalRecords,
+      icon: FileText,
+      bg: 'bg-emerald-600',
+      text: 'text-white',
+      description: 'All files'
+    },
+  ];
+
+  const statusCards = [
+    {
+      title: 'Active Files',
+      value: metrics.active,
+      icon: FileText,
       bg: 'bg-emerald-500',
       text: 'text-white'
     },
     {
-      title: 'Archived',
+      title: 'Archived Files',
       value: metrics.archived,
       icon: Archive,
       bg: 'bg-slate-500',
-      text: 'text-white'
-    },
-    {
-      title: 'Critical',
-      value: metrics.critical,
-      icon: AlertTriangle,
-      bg: 'bg-red-500',
       text: 'text-white'
     },
   ];
@@ -101,10 +140,231 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Primary Metrics Cards */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        {metricCards.map((card) => {
-          const Icon = card.icon;
+      {/* Storage Hierarchy Summary */}
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-3">Storage Hierarchy Summary</h2>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+          {summaryCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <Card
+                key={card.title}
+                className="relative overflow-hidden border-none bg-[#0f172a] text-white shadow-lg hover:shadow-xl transition-shadow"
+              >
+                <CardContent className="p-6 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-400">{card.title}</p>
+                    <div className="text-3xl font-bold">{card.value}</div>
+                    <p className="text-xs text-slate-500">{card.description}</p>
+                  </div>
+                  <div className={`h-12 w-12 rounded-xl ${card.bg} flex items-center justify-center shadow-lg`}>
+                    <Icon className={`h-6 w-6 ${card.text}`} />
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* File Status Summary */}
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-3">File Status Summary</h2>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+          {statusCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <Card
+                key={card.title}
+                className="relative overflow-hidden border-none bg-[#0f172a] text-white shadow-lg hover:shadow-xl transition-shadow"
+              >
+                <CardContent className="p-6 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-400">{card.title}</p>
+                    <div className="text-3xl font-bold">{card.value}</div>
+                  </div>
+                  <div className={`h-12 w-12 rounded-xl ${card.bg} flex items-center justify-center shadow-lg`}>
+                    <Icon className={`h-6 w-6 ${card.text}`} />
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Status Distribution Chart */}
+        <Card className="border-none bg-[#0f172a] text-white shadow-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-emerald-400" />
+              File Status Distribution
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[280px] relative">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <defs>
+                    <linearGradient id="activeGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
+                      <stop offset="100%" stopColor="#059669" stopOpacity={1} />
+                    </linearGradient>
+                    <linearGradient id="archivedGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#64748b" stopOpacity={1} />
+                      <stop offset="100%" stopColor="#475569" stopOpacity={1} />
+                    </linearGradient>
+                  </defs>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={70}
+                    outerRadius={100}
+                    paddingAngle={5}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={index === 0 ? 'url(#activeGradient)' : 'url(#archivedGradient)'}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff', borderRadius: '8px' }}
+                    itemStyle={{ color: '#fff' }}
+                  />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={36}
+                    iconType="circle"
+                    wrapperStyle={{ paddingTop: '20px' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Center Text */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-8">
+                <span className="text-4xl font-bold text-white">{metrics.totalRecords}</span>
+                <span className="text-sm text-slate-400">Total Files</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Top Shelves Chart */}
+        <Card className="border-none bg-[#0f172a] text-white shadow-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-blue-400" />
+              Top Shelves by Files
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[280px]">
+              {topShelves.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-slate-400">
+                  No data available
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topShelves} margin={{ top: 20, right: 10, left: -10, bottom: 5 }}>
+                    <defs>
+                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#1d4ed8" stopOpacity={1} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="code"
+                      stroke="#94a3b8"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      stroke="#94a3b8"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      cursor={{ fill: '#1e293b' }}
+                      contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff', borderRadius: '8px' }}
+                      formatter={(value, name, props) => [value, props.payload.name]}
+                    />
+                    <Bar
+                      dataKey="count"
+                      fill="url(#barGradient)"
+                      radius={[8, 8, 0, 0]}
+                      barSize={50}
+                    >
+                      <LabelList dataKey="count" position="top" fill="#fff" fontSize={12} fontWeight="bold" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Recent Activity */}
+      <Card className="border-none bg-[#0f172a] text-white shadow-lg">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Recent Activity</CardTitle>
+          <Clock className="h-4 w-4 text-slate-400" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {recentProcurements.length === 0 ? (
+              <p className="text-center text-slate-400 py-8">No recent activities</p>
+            ) : (
+              recentProcurements.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between p-4 rounded-xl bg-[#1e293b] hover:bg-[#253045] transition-colors group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`h-10 w-10 rounded-full flex items-center justify-center ${p.status === 'active' ? 'bg-emerald-500/20 text-emerald-500' :
+                      'bg-slate-500/20 text-slate-500'
+                      }`}>
+                      {p.status === 'active' ? <FileText className="h-5 w-5" /> :
+                        <Archive className="h-5 w-5" />}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-white">{p.prNumber}</p>
+                      <p className="text-xs text-slate-400 line-clamp-1">{p.description}</p>
+                      <p className="text-xs text-blue-400 mt-1">
+                        Location: {getLocationString(p)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <p className={`text-sm font-medium ${p.status === 'active' ? 'text-emerald-500' :
+                      'text-slate-500'
+                      }`}>
+                      {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default Dashboard;          const Icon = card.icon;
           return (
             <Card
               key={card.title}
