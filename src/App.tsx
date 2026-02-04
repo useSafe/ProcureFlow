@@ -41,21 +41,21 @@ const AppRoutes = () => {
         }
       />
       <Route
-  path="/cabinet"
+  path="/cabinets"
   element={
     <ProtectedRoute>
       <AppLayout>
-        <Shelves />  {/* Changed from Cabinets */}
+         <Cabinets /> {/* Changed from Cabinets */}
       </AppLayout>
     </ProtectedRoute>
   }
 />
 <Route
-  path="/shelve"
+  path="/shelves"
   element={
     <ProtectedRoute>
       <AppLayout>
-        <Cabinets />  {/* Changed from Shelves */}
+        <Shelves />  {/* Changed from Shelves */}
       </AppLayout>
     </ProtectedRoute>
   }
