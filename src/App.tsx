@@ -41,25 +41,25 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/cabinet"
-        element={
-          <ProtectedRoute>
-            <AppLayout>
-              <Cabinets />
-            </AppLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/shelve"
-        element={
-          <ProtectedRoute>
-            <AppLayout>
-              <Shelves />
-            </AppLayout>
-          </ProtectedRoute>
-        }
-      />
+  path="/cabinet"
+  element={
+    <ProtectedRoute>
+      <AppLayout>
+        <Shelves />  {/* Changed from Cabinets */}
+      </AppLayout>
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/shelve"
+  element={
+    <ProtectedRoute>
+      <AppLayout>
+        <Cabinets />  {/* Changed from Shelves */}
+      </AppLayout>
+    </ProtectedRoute>
+  }
+/>
       <Route
         path="/folders"
         element={
