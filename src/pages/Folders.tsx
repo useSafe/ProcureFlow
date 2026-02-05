@@ -201,8 +201,11 @@ const Folders: React.FC = () => {
     };
 
     const handleViewFiles = (folderId: string) => {
-        navigate(`/records?folderId=${folderId}`);
-    };
+    // Change this to match your actual route path
+    navigate(`/procurement-list?folderId=${folderId}`);
+    // OR whatever your actual route is:
+    // navigate(`/your-actual-route?folderId=${folderId}`);
+};
 
     const getShelfName = (id: string) => {
         return shelves.find(s => s.id === id)?.name || 'Unknown Shelf';
