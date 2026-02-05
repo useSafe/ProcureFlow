@@ -319,13 +319,13 @@ const Cabinets: React.FC = () => {
             <Card className="border-none bg-[#0f172a] shadow-lg">
                 <CardContent className="p-4">
                     <div className="flex gap-4 items-center">
-                        <Label className="text-slate-300 whitespace-nowrap">Filter by Cabinet:</Label>
+                        <Label className="text-slate-300 whitespace-nowrap">Filter by Shelves:</Label>
                         <Select value={filterCabinet} onValueChange={setFilterCabinet}>
                             <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
                                 <SelectValue placeholder="All Cabinets" />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                <SelectItem value="all">All Cabinets</SelectItem>
+                                <SelectItem value="all">All Shelves</SelectItem>
                                 {cabinets.map(c => (
                                     <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
                                 ))}
