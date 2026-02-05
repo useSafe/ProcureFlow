@@ -97,16 +97,19 @@ const ProcurementList: React.FC = () => {
     const [filterAvailableShelves, setFilterAvailableShelves] = useState<Shelf[]>([]);
     const [filterAvailableFolders, setFilterAvailableFolders] = useState<Folder[]>([]);
 
-    // Filters
+    // Filters (existing)
     const [filters, setFilters] = useState<ProcurementFilters>({
         search: '',
         cabinetId: '',
         shelfId: '',
         folderId: folderIdFromUrl || '',
-        status: '',
+        status: '', // kept for backward compatibility, not used for multi-select
         monthYear: '',
         urgencyLevel: '',
     });
+
+    // New: multi-select status filter state (empty = all)
+    const [statusFilters, setStatusFilters] = useState<string[]>([]);
 
     const itemsPerPage = 10;
 
@@ -176,6 +179,20 @@ const ProcurementList: React.FC = () => {
         }
     }, [filters.shelfId, folders]);
 
+    // build status options based on current procurements (fall back to common ones)
+    const statusOptions = Array.from(new Set([
+        ...procurements.map(p => p.status),
+        'active',
+        'archived'
+    ])).filter(Boolean) as string[];
+
+    const toggleStatusFilter = (status: string) => {
+        setStatusFilters(prev => {
+            if (prev.includes(status)) return prev.filter(s => s !== status);
+            return [...prev, status];
+        });
+    };
+
     const filteredProcurements = (procurements || []).filter(procurement => {
         const matchesSearch =
             procurement.prNumber.toLowerCase().includes(filters.search.toLowerCase()) ||
@@ -184,7 +201,10 @@ const ProcurementList: React.FC = () => {
         const matchesCabinet = !filters.cabinetId || filters.cabinetId === 'all_cabinets' || procurement.cabinetId === filters.cabinetId;
         const matchesShelf = !filters.shelfId || filters.shelfId === 'all_shelves' || procurement.shelfId === filters.shelfId;
         const matchesFolder = !filters.folderId || filters.folderId === 'all_folders' || procurement.folderId === filters.folderId;
-        const matchesStatus = !filters.status || filters.status === 'all_status' || procurement.status === filters.status;
+
+        // New: multi-select status filtering (empty -> all)
+        const matchesStatus = statusFilters.length === 0 || statusFilters.includes(procurement.status);
+
         const matchesUrgency = !filters.urgencyLevel || filters.urgencyLevel === 'all_urgency' || procurement.urgencyLevel === filters.urgencyLevel;
 
         return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesUrgency;
@@ -214,6 +234,8 @@ const ProcurementList: React.FC = () => {
             monthYear: '',
             urgencyLevel: '',
         });
+        // clear multi-select status
+        setStatusFilters([]);
         setCurrentPage(1);
     };
 
@@ -554,20 +576,41 @@ const ProcurementList: React.FC = () => {
                                 </Select>
                             </div>
 
+                            {/* STATUS multi-select dropdown */}
                             <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
-                                <Select
-                                    value={filters.status}
-                                    onValueChange={(value) => setFilters({ ...filters, status: value as ProcurementStatus })}
-                                >
-                                    <SelectTrigger className="w-[120px] border-none bg-transparent text-white focus:ring-0">
-                                        <SelectValue placeholder="Status" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectItem value="all_status">All Status</SelectItem>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="archived">Archived</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" className="flex items-center gap-2 text-white px-3 py-1">
+                                            <span>Status</span>
+                                            {statusFilters.length > 0 && (
+                                                <span className="inline-flex items-center justify-center h-6 min-w-[24px] px-2 rounded-full bg-emerald-600 text-white text-xs font-medium">
+                                                    {statusFilters.length}
+                                                </span>
+                                            )}
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="bg-[#1e293b] border-slate-700 text-white p-3 w-56">
+                                        <div className="mb-2 text-slate-300 text-sm">Select status</div>
+                                        <div className="flex flex-col gap-2 max-h-48 overflow-auto">
+                                            {statusOptions.map((status) => (
+                                                <div key={status} className="flex items-center gap-2">
+                                                    <Checkbox
+                                                        checked={statusFilters.includes(status)}
+                                                        onCheckedChange={() => toggleStatusFilter(status)}
+                                                        className="border-slate-500 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-600"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleStatusFilter(status)}
+                                                        className="text-sm text-slate-200 text-left w-full"
+                                                    >
+                                                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
 
                             <Button
