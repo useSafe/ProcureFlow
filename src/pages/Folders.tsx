@@ -61,8 +61,8 @@ const Folders: React.FC = () => {
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
 
-    // Filter
-    const [filterShelf, setFilterShelf] = useState<string>(cabinetIdFromUrl || '');
+    // Filter (now multi-select)
+    const [filterShelves, setFilterShelves] = useState<string[]>(cabinetIdFromUrl ? [cabinetIdFromUrl] : []);
 
     // Bulk Selection
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -94,7 +94,7 @@ const Folders: React.FC = () => {
 
     useEffect(() => {
         if (cabinetIdFromUrl) {
-            setFilterShelf(cabinetIdFromUrl);
+            setFilterShelves([cabinetIdFromUrl]);
         }
     }, [cabinetIdFromUrl]);
 
@@ -213,10 +213,23 @@ const Folders: React.FC = () => {
         return procurements.filter(p => p.folderId === folderId).length;
     };
 
+    // Toggle a shelf id on/off in the filter list
+    const toggleFilterShelf = (id: string) => {
+        setFilterShelves(prev => {
+            if (prev.includes(id)) {
+                return prev.filter(x => x !== id);
+            }
+            return [...prev, id];
+        });
+    };
+
+    // When filterShelves is empty -> treat as "All"
     const filteredFolders = folders.filter(folder => {
-        if (!filterShelf || filterShelf === 'all') return true;
-        return folder.shelfId === filterShelf;
+        if (filterShelves.length === 0) return true; // no selection = all
+        return filterShelves.includes(folder.shelfId);
     });
+
+    const selectedFilterCount = filterShelves.length;
 
     return (
         <div className="space-y-6">
@@ -332,15 +345,64 @@ const Folders: React.FC = () => {
                 <CardContent className="p-4">
                     <div className="flex gap-4 items-center">
                         <Label className="text-slate-300 whitespace-nowrap">Filter by Cabinet:</Label>
-                        <Select value={filterShelf} onValueChange={setFilterShelf}>
-                            <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
-                                <SelectValue placeholder="All Cabinet" />
+
+                        {/* Multi-select dropdown with checkboxes */}
+                        <Select>
+                            <SelectTrigger className="w-[260px] bg-[#1e293b] border-slate-700 text-white">
+                                <div className="flex items-center justify-between w-full">
+                                    <SelectValue placeholder="All Cabinet" />
+                                    <div className="ml-2">
+                                        {selectedFilterCount > 0 && (
+                                            <span className="inline-flex items-center justify-center h-6 min-w-[24px] px-2 rounded-full bg-emerald-600 text-white text-xs font-medium">
+                                                {selectedFilterCount}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </SelectTrigger>
-                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                <SelectItem value="all">All Cabinet</SelectItem>
-                                {shelves.map(s => (
-                                    <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
-                                ))}
+
+                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white w-[260px]">
+                                <div className="p-3">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Checkbox
+                                            checked={filterShelves.length === 0}
+                                            onCheckedChange={(checked) => {
+                                                // checked true -> select All (we represent All by empty array)
+                                                if (checked) {
+                                                    setFilterShelves([]);
+                                                } else {
+                                                    // if user unchecks All, keep empty (no-op)
+                                                    // to make user choose explicit items, we leave it empty
+                                                    setFilterShelves([]);
+                                                }
+                                            }}
+                                            className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                        />
+                                        <span className="text-sm text-slate-200">All Cabinets</span>
+                                    </div>
+
+                                    <div className="max-h-48 overflow-auto space-y-2">
+                                        {shelves.map(s => (
+                                            <div key={s.id} className="flex items-center gap-2">
+                                                <Checkbox
+                                                    checked={filterShelves.includes(s.id)}
+                                                    onCheckedChange={(checked) => {
+                                                        // toggle shelf id selection
+                                                        toggleFilterShelf(s.id);
+                                                    }}
+                                                    className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleFilterShelf(s.id)}
+                                                    className="text-sm text-slate-200 text-left w-full"
+                                                >
+                                                    {s.code} - {s.name}
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             </SelectContent>
                         </Select>
                     </div>
