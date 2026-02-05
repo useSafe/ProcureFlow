@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,6 +70,9 @@ import autoTable from 'jspdf-autotable';
 
 const ProcurementList: React.FC = () => {
     const { user } = useAuth();
+    const [searchParams] = useSearchParams();
+    const folderIdFromUrl = searchParams.get('folderId');
+
     const [procurements, setProcurements] = useState<Procurement[]>([]);
 
     // Location Data - Note: cabinets table stores Shelves (Tier 1), shelves table stores Cabinets (Tier 2)
@@ -89,12 +93,16 @@ const ProcurementList: React.FC = () => {
     const [editAvailableShelves, setEditAvailableShelves] = useState<Shelf[]>([]);
     const [editAvailableFolders, setEditAvailableFolders] = useState<Folder[]>([]);
 
+    // Cascading Filter Data
+    const [filterAvailableShelves, setFilterAvailableShelves] = useState<Shelf[]>([]);
+    const [filterAvailableFolders, setFilterAvailableFolders] = useState<Folder[]>([]);
+
     // Filters
     const [filters, setFilters] = useState<ProcurementFilters>({
         search: '',
         cabinetId: '',
         shelfId: '',
-        folderId: '',
+        folderId: folderIdFromUrl || '',
         status: '',
         monthYear: '',
         urgencyLevel: '',
@@ -117,6 +125,23 @@ const ProcurementList: React.FC = () => {
         };
     }, []);
 
+    useEffect(() => {
+        if (folderIdFromUrl) {
+            const folder = folders.find(f => f.id === folderIdFromUrl);
+            if (folder) {
+                const shelf = shelves.find(s => s.id === folder.shelfId);
+                if (shelf) {
+                    setFilters(prev => ({
+                        ...prev,
+                        cabinetId: shelf.cabinetId,
+                        shelfId: folder.shelfId,
+                        folderId: folderIdFromUrl
+                    }));
+                }
+            }
+        }
+    }, [folderIdFromUrl, folders, shelves]);
+
     // Update edit form cascading dropdowns
     useEffect(() => {
         if (editingProcurement && editingProcurement.cabinetId) {
@@ -134,16 +159,35 @@ const ProcurementList: React.FC = () => {
         }
     }, [editingProcurement?.shelfId, folders]);
 
+    // Update filter cascading dropdowns
+    useEffect(() => {
+        if (filters.cabinetId) {
+            setFilterAvailableShelves(shelves.filter(s => s.cabinetId === filters.cabinetId));
+        } else {
+            setFilterAvailableShelves([]);
+        }
+    }, [filters.cabinetId, shelves]);
+
+    useEffect(() => {
+        if (filters.shelfId) {
+            setFilterAvailableFolders(folders.filter(f => f.shelfId === filters.shelfId));
+        } else {
+            setFilterAvailableFolders([]);
+        }
+    }, [filters.shelfId, folders]);
+
     const filteredProcurements = (procurements || []).filter(procurement => {
         const matchesSearch =
             procurement.prNumber.toLowerCase().includes(filters.search.toLowerCase()) ||
             procurement.description.toLowerCase().includes(filters.search.toLowerCase());
 
         const matchesCabinet = !filters.cabinetId || filters.cabinetId === 'all_cabinets' || procurement.cabinetId === filters.cabinetId;
+        const matchesShelf = !filters.shelfId || filters.shelfId === 'all_shelves' || procurement.shelfId === filters.shelfId;
+        const matchesFolder = !filters.folderId || filters.folderId === 'all_folders' || procurement.folderId === filters.folderId;
         const matchesStatus = !filters.status || filters.status === 'all_status' || procurement.status === filters.status;
         const matchesUrgency = !filters.urgencyLevel || filters.urgencyLevel === 'all_urgency' || procurement.urgencyLevel === filters.urgencyLevel;
 
-        return matchesSearch && matchesCabinet && matchesStatus && matchesUrgency;
+        return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesUrgency;
     });
 
     const totalPages = Math.ceil(filteredProcurements.length / itemsPerPage);
@@ -257,7 +301,6 @@ const ProcurementList: React.FC = () => {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Procurements');
 
-        // Generate filename with current date
         const filename = `procurement-records-${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
         XLSX.writeFile(wb, filename);
 
@@ -267,15 +310,12 @@ const ProcurementList: React.FC = () => {
     const handleExportPDFSummary = () => {
         const doc = new jsPDF();
 
-        // Title
         doc.setFontSize(18);
         doc.text('Procurement Records - Summary Report', 14, 20);
 
-        // Date
         doc.setFontSize(10);
         doc.text(`Generated: ${format(new Date(), 'MMMM d, yyyy - hh:mm a')}`, 14, 28);
 
-        // Summary data
         const summaryData = filteredProcurements.map(p => [
             p.prNumber,
             p.description.substring(0, 40) + (p.description.length > 40 ? '...' : ''),
@@ -300,15 +340,12 @@ const ProcurementList: React.FC = () => {
     const handleExportPDFFull = () => {
         const doc = new jsPDF();
 
-        // Title
         doc.setFontSize(18);
         doc.text('Procurement Records - Full Report', 14, 20);
 
-        // Date
         doc.setFontSize(10);
         doc.text(`Generated: ${format(new Date(), 'MMMM d, yyyy - hh:mm a')}`, 14, 28);
 
-        // Full data
         const fullData = filteredProcurements.map(p => [
             p.prNumber,
             p.description.substring(0, 30) + (p.description.length > 30 ? '...' : ''),
@@ -340,7 +377,6 @@ const ProcurementList: React.FC = () => {
             await deleteProcurement(deleteId);
             toast.success('Record deleted successfully');
             setDeleteId(null);
-            // Remove from selection if it was selected
             if (selectedIds.includes(deleteId)) {
                 setSelectedIds(prev => prev.filter(id => id !== deleteId));
             }
@@ -371,9 +407,6 @@ const ProcurementList: React.FC = () => {
         if (selectedIds.length === 0) return;
 
         try {
-            // Delete all selected records
-            // In a real app, this should be a batch operation or use Promise.all
-            // For now, we'll iterate
             await Promise.all(selectedIds.map(id => deleteProcurement(id)));
 
             toast.success(`${selectedIds.length} records deleted successfully`);
@@ -448,7 +481,7 @@ const ProcurementList: React.FC = () => {
 
             <Card className="border-none bg-[#0f172a] shadow-lg">
                 <CardHeader className="pb-3">
-                    <div className="flex flex-col md:flex-row gap-4">
+                    <div className="flex flex-col gap-4">
                         <div className="relative flex-1">
                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
                             <Input
@@ -458,11 +491,16 @@ const ProcurementList: React.FC = () => {
                                 onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                             />
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                             <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filters.cabinetId}
-                                    onValueChange={(value) => setFilters({ ...filters, cabinetId: value })}
+                                    onValueChange={(value) => setFilters({ 
+                                        ...filters, 
+                                        cabinetId: value,
+                                        shelfId: '', // Reset child
+                                        folderId: '' // Reset child
+                                    })}
                                 >
                                     <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
                                         <SelectValue placeholder="Shelf" />
@@ -471,6 +509,46 @@ const ProcurementList: React.FC = () => {
                                         <SelectItem value="all_cabinets">All Shelves</SelectItem>
                                         {cabinets.map((c) => (
                                             <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                                <Select
+                                    value={filters.shelfId}
+                                    onValueChange={(value) => setFilters({ 
+                                        ...filters, 
+                                        shelfId: value,
+                                        folderId: '' // Reset child
+                                    })}
+                                    disabled={!filters.cabinetId}
+                                >
+                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                        <SelectValue placeholder="Cabinet" />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                        <SelectItem value="all_shelves">All Cabinets</SelectItem>
+                                        {filterAvailableShelves.map((s) => (
+                                            <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                                <Select
+                                    value={filters.folderId}
+                                    onValueChange={(value) => setFilters({ ...filters, folderId: value })}
+                                    disabled={!filters.shelfId}
+                                >
+                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                        <SelectValue placeholder="Folder" />
+                                    </SelectTrigger>
+                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                        <SelectItem value="all_folders">All Folders</SelectItem>
+                                        {filterAvailableFolders.map((f) => (
+                                            <SelectItem key={f.id} value={f.id}>{f.code} - {f.name}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
@@ -599,7 +677,7 @@ const ProcurementList: React.FC = () => {
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
-                                                            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700 text-white">Delete</AlertDialogAction>
+                                                            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-red-600 hover:bg-red-700 text-white">Delete</AlertDialogAction>
                                                         </AlertDialogFooter>
                                                     </AlertDialogContent>
                                                 </AlertDialog>

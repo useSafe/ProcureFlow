@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,20 +41,32 @@ import {
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { getFolders, getCabinets, getShelves, addFolder, updateFolder, deleteFolder, onFoldersChange, onCabinetsChange, onShelvesChange, onProcurementsChange } from '@/lib/storage';
-import { Cabinet, Shelf, Folder, Procurement } from '@/types/procurement'; // Added Procurement type
+import { Cabinet, Shelf, Folder, Procurement } from '@/types/procurement';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, FileText } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, Eye } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const Folders: React.FC = () => {
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const cabinetIdFromUrl = searchParams.get('cabinetId');
+
     const [folders, setFolders] = useState<Folder[]>([]);
     const [cabinets, setCabinets] = useState<Cabinet[]>([]);
     const [shelves, setShelves] = useState<Shelf[]>([]);
-    const [procurements, setProcurements] = useState<Procurement[]>([]); // To count files
+    const [procurements, setProcurements] = useState<Procurement[]>([]);
 
     // UI State
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
+
+    // Filter
+    const [filterShelf, setFilterShelf] = useState<string>(cabinetIdFromUrl || '');
+
+    // Bulk Selection
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
 
     // Form inputs
     const [name, setName] = useState('');
@@ -66,7 +79,6 @@ const Folders: React.FC = () => {
     const [availableShelves, setAvailableShelves] = useState<Shelf[]>([]);
 
     useEffect(() => {
-        // Subscribe to real-time updates
         const unsubFolders = onFoldersChange(setFolders);
         const unsubCabinets = onCabinetsChange(setCabinets);
         const unsubShelves = onShelvesChange(setShelves);
@@ -80,7 +92,12 @@ const Folders: React.FC = () => {
         };
     }, []);
 
-    // Filter available shelves when cabinet selection changes
+    useEffect(() => {
+        if (cabinetIdFromUrl) {
+            setFilterShelf(cabinetIdFromUrl);
+        }
+    }, [cabinetIdFromUrl]);
+
     useEffect(() => {
         if (cabinetId) {
             setAvailableShelves(shelves.filter(s => s.cabinetId === cabinetId));
@@ -144,9 +161,47 @@ const Folders: React.FC = () => {
         try {
             await deleteFolder(id);
             toast.success('Folder deleted successfully');
+            if (selectedIds.includes(id)) {
+                setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+            }
         } catch (error) {
             toast.error('Failed to delete folder');
         }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        try {
+            await Promise.all(selectedIds.map(id => deleteFolder(id)));
+            toast.success(`${selectedIds.length} folders deleted successfully`);
+            setSelectedIds([]);
+            setIsBulkDeleteDialogOpen(false);
+        } catch (error) {
+            toast.error('Failed to delete some folders');
+        }
+    };
+
+    const handleSelectAll = (checked: boolean) => {
+        if (checked) {
+            const currentIds = filteredFolders.map(f => f.id);
+            setSelectedIds(prev => Array.from(new Set([...prev, ...currentIds])));
+        } else {
+            const currentIds = filteredFolders.map(f => f.id);
+            setSelectedIds(prev => prev.filter(id => !currentIds.includes(id)));
+        }
+    };
+
+    const handleSelectOne = (id: string, checked: boolean) => {
+        if (checked) {
+            setSelectedIds(prev => [...prev, id]);
+        } else {
+            setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+        }
+    };
+
+    const handleViewFiles = (folderId: string) => {
+        navigate(`/records?folderId=${folderId}`);
     };
 
     const getShelfName = (id: string) => {
@@ -157,6 +212,11 @@ const Folders: React.FC = () => {
         return procurements.filter(p => p.folderId === folderId).length;
     };
 
+    const filteredFolders = folders.filter(folder => {
+        if (!filterShelf || filterShelf === 'all') return true;
+        return folder.shelfId === filterShelf;
+    });
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -164,89 +224,140 @@ const Folders: React.FC = () => {
                     <h1 className="text-3xl font-bold text-white">Folders</h1>
                     <p className="text-slate-400 mt-1">Manage folders within shelves (Tier 3)</p>
                 </div>
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="bg-blue-600 hover:bg-blue-700">
-                            <Plus className="mr-2 h-4 w-4" /> Add Folder
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
-                        <DialogHeader>
-                            <DialogTitle>Add New Folder</DialogTitle>
-                            <DialogDescription className="text-slate-400">
-                                Create a new folder inside a shelf.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label className="text-right text-slate-300">Cabinet</Label>
-                                <Select value={cabinetId} onValueChange={setCabinetId}>
-                                    <SelectTrigger className="col-span-3 bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectValue placeholder="Select Cabinet" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                        {cabinets.map(c => (
-                                            <SelectItem key={c.id} value={c.id}>{c.name} ({c.code})</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                <div className="flex gap-2">
+                    {selectedIds.length > 0 && (
+                        <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
+                            <AlertDialogTrigger asChild>
+                                <Button variant="destructive" className="bg-red-600 hover:bg-red-700">
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete Selected ({selectedIds.length})
+                                </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent className="bg-[#1e293b] border-slate-800 text-white">
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete {selectedIds.length} Folders?</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-slate-400">
+                                        This action cannot be undone. This will permanently delete the selected folders.
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-700 text-white">Delete All</AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                        </AlertDialog>
+                    )}
+                    <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="bg-blue-600 hover:bg-blue-700">
+                                <Plus className="mr-2 h-4 w-4" /> Add Folder
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
+                            <DialogHeader>
+                                <DialogTitle>Add New Folder</DialogTitle>
+                                <DialogDescription className="text-slate-400">
+                                    Create a new folder inside a shelf.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label className="text-right text-slate-300">Cabinet</Label>
+                                    <Select value={cabinetId} onValueChange={setCabinetId}>
+                                        <SelectTrigger className="col-span-3 bg-[#1e293b] border-slate-700 text-white">
+                                            <SelectValue placeholder="Select Cabinet" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                            {cabinets.map(c => (
+                                                <SelectItem key={c.id} value={c.id}>{c.name} ({c.code})</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label className="text-right text-slate-300">Shelf</Label>
+                                    <Select value={shelfId} onValueChange={setShelfId} disabled={!cabinetId}>
+                                        <SelectTrigger className="col-span-3 bg-[#1e293b] border-slate-700 text-white">
+                                            <SelectValue placeholder="Select Shelf" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                            {availableShelves.map(s => (
+                                                <SelectItem key={s.id} value={s.id}>{s.name} ({s.code})</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="name" className="text-right text-slate-300">Name</Label>
+                                    <Input
+                                        id="name"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
+                                        placeholder="Project Documents"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="code" className="text-right text-slate-300">Code</Label>
+                                    <Input
+                                        id="code"
+                                        value={code}
+                                        onChange={(e) => setCode(e.target.value)}
+                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
+                                        placeholder="F1"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="desc" className="text-right text-slate-300">Description</Label>
+                                    <Textarea
+                                        id="desc"
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
+                                    />
+                                </div>
                             </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label className="text-right text-slate-300">Shelf</Label>
-                                <Select value={shelfId} onValueChange={setShelfId} disabled={!cabinetId}>
-                                    <SelectTrigger className="col-span-3 bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectValue placeholder="Select Shelf" />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                        {availableShelves.map(s => (
-                                            <SelectItem key={s.id} value={s.id}>{s.name} ({s.code})</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="name" className="text-right text-slate-300">Name</Label>
-                                <Input
-                                    id="name"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="Project Documents"
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="code" className="text-right text-slate-300">Code</Label>
-                                <Input
-                                    id="code"
-                                    value={code}
-                                    onChange={(e) => setCode(e.target.value)}
-                                    className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                    placeholder="F1"
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="desc" className="text-right text-slate-300">Description</Label>
-                                <Textarea
-                                    id="desc"
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                />
-                            </div>
-                        </div>
-                        <DialogFooter>
-                            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)} className="border-slate-700 text-white hover:bg-slate-800">Cancel</Button>
-                            <Button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-700">Save Folder</Button>
-                        </DialogFooter>
-                    </DialogContent>
-                </Dialog>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)} className="border-slate-700 text-white hover:bg-slate-800">Cancel</Button>
+                                <Button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-700">Save Folder</Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+                </div>
             </div>
+
+            {/* Filter */}
+            <Card className="border-none bg-[#0f172a] shadow-lg">
+                <CardContent className="p-4">
+                    <div className="flex gap-4 items-center">
+                        <Label className="text-slate-300 whitespace-nowrap">Filter by Shelf:</Label>
+                        <Select value={filterShelf} onValueChange={setFilterShelf}>
+                            <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
+                                <SelectValue placeholder="All Shelves" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                <SelectItem value="all">All Shelves</SelectItem>
+                                {shelves.map(s => (
+                                    <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card className="border-none bg-[#0f172a] shadow-lg">
                 <CardContent className="p-0">
                     <Table>
                         <TableHeader>
                             <TableRow className="border-slate-800 hover:bg-transparent">
+                                <TableHead className="w-[50px]">
+                                    <Checkbox
+                                        checked={filteredFolders.length > 0 && filteredFolders.every(f => selectedIds.includes(f.id))}
+                                        onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                                        className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                    />
+                                </TableHead>
                                 <TableHead className="text-slate-300">Details</TableHead>
                                 <TableHead className="text-slate-300">Parent Shelf</TableHead>
                                 <TableHead className="text-slate-300">Code</TableHead>
@@ -255,15 +366,22 @@ const Folders: React.FC = () => {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {folders.length === 0 ? (
+                            {filteredFolders.length === 0 ? (
                                 <TableRow className="border-slate-800">
-                                    <TableCell colSpan={5} className="h-24 text-center text-slate-500">
+                                    <TableCell colSpan={6} className="h-24 text-center text-slate-500">
                                         No folders found. Add your first folder.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                folders.map((folder) => (
+                                filteredFolders.map((folder) => (
                                     <TableRow key={folder.id} className="border-slate-800 hover:bg-[#1e293b]">
+                                        <TableCell>
+                                            <Checkbox
+                                                checked={selectedIds.includes(folder.id)}
+                                                onCheckedChange={(checked) => handleSelectOne(folder.id, checked as boolean)}
+                                                className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                            />
+                                        </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-3">
                                                 <div className="h-10 w-10 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-500">
@@ -288,6 +406,15 @@ const Folders: React.FC = () => {
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => handleViewFiles(folder.id)}
+                                                    className="h-8 bg-emerald-600/10 border-emerald-600/20 text-emerald-500 hover:bg-emerald-600/20 hover:text-emerald-400"
+                                                >
+                                                    <Eye className="h-4 w-4 mr-1" />
+                                                    View Files
+                                                </Button>
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
