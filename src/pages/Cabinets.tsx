@@ -322,7 +322,7 @@ const Cabinets: React.FC = () => {
                         <Label className="text-slate-300 whitespace-nowrap">Filter by Shelves:</Label>
                         <Select value={filterCabinet} onValueChange={setFilterCabinet}>
                             <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
-                                <SelectValue placeholder="All Cabinets" />
+                                <SelectValue placeholder="All Shelves" />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                 <SelectItem value="all">All Shelves</SelectItem>

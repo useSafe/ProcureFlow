@@ -334,7 +334,7 @@ const Folders: React.FC = () => {
                         <Label className="text-slate-300 whitespace-nowrap">Filter by Cabinet:</Label>
                         <Select value={filterShelf} onValueChange={setFilterShelf}>
                             <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
-                                <SelectValue placeholder="All Shelves" />
+                                <SelectValue placeholder="All Cabinet" />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                 <SelectItem value="all">All Cabinet</SelectItem>
