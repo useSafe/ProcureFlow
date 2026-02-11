@@ -114,12 +114,7 @@ const Login: React.FC = () => {
               )}
             </Button>
 
-            <div className="text-center text-sm">
-              <span className="text-muted-foreground">Don't have an account? </span>
-              <Link to="/register" className="text-primary hover:underline font-medium">
-                Create Account
-              </Link>
-            </div>
+
 
             {/* <div className="mt-4 rounded-lg bg-muted p-4 text-sm">
               <p className="font-medium text-foreground">Demo Credentials:</p>

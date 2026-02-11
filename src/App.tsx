@@ -4,14 +4,18 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { DataProvider } from "@/contexts/DataContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import AppLayout from "@/components/layout/AppLayout";
 import Login from "@/pages/Login";
-import Register from "@/pages/Register";
+import UserManagement from "@/pages/UserManagement";
 import Dashboard from "@/pages/Dashboard";
 import Cabinets from "@/pages/Cabinets";
 import Shelves from "@/pages/Shelves";
 import Folders from "@/pages/Folders";
+import Divisions from "@/pages/Divisions";
+import Boxes from "@/pages/Boxes";
+import VisualAllocation from "@/pages/VisualAllocation";
 import AddProcurement from "@/pages/AddProcurement";
 import ProcurementList from "@/pages/ProcurementList";
 import NotFound from "./pages/NotFound";
@@ -28,8 +32,14 @@ const AppRoutes = () => {
         element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login />}
       />
       <Route
-        path="/register"
-        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Register />}
+        path="/users"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <UserManagement />
+            </AppLayout>
+          </ProtectedRoute>
+        }
       />
       <Route
         path="/"
@@ -77,6 +87,36 @@ const AppRoutes = () => {
         }
       />
       <Route
+        path="/divisions"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Divisions />
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/boxes"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Boxes />
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/visual-allocation"
+        element={
+          <ProtectedRoute>
+            <AppLayout>
+              <VisualAllocation />
+            </AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/procurement/add"
         element={
           <ProtectedRoute>
@@ -108,7 +148,9 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <DataProvider>
+            <AppRoutes />
+          </DataProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

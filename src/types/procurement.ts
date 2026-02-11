@@ -1,5 +1,6 @@
 export type ProcurementStatus = 'active' | 'archived';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
+export type ProgressStatus = 'Pending' | 'Success' | 'Failed';
 
 // Location Hierarchy Types
 export interface Cabinet {
@@ -25,7 +26,54 @@ export interface Folder {
     name: string;
     code: string; // e.g., "F1", "F2"
     description?: string;
+    color?: string; // Hex color code
     createdAt: string;
+}
+
+export interface Box {
+    id: string;
+    name: string;
+    code: string; // e.g., "B1"
+    description?: string;
+    createdAt: string;
+}
+
+export interface Division {
+    id: string;
+    name: string;
+    abbreviation: string; // e.g., "IT", "HR"
+    createdAt: string;
+}
+
+// Expanded Checklist based on user image
+export interface ProcurementChecklist {
+    noticeToProceed: boolean; // A
+    contractOfAgreement: boolean; // B
+    noticeOfAward: boolean; // C
+    bacResolutionAward: boolean; // D
+    postQualReport: boolean; // E
+    noticePostQual: boolean; // F
+    bacResolutionPostQual: boolean; // G
+    abstractBidsEvaluated: boolean; // H
+    twgBidEvalReport: boolean; // I
+    minutesBidOpening: boolean; // J
+    resultEligibilityCheck: boolean; // K
+    biddersTechFinancialProposals: boolean; // L
+    minutesPreBid: boolean; // M
+    biddingDocuments: boolean; // N
+    otherDocsPeculiar: boolean; // O
+    // O.1 - O.4
+    inviteObservers: boolean;
+    officialReceipt: boolean;
+    boardResolution: boolean;
+    philgepsAwardNotice: boolean;
+    // P
+    inviteApplyEligibility: boolean;
+    philgepsPosting: boolean; // P.1
+    websitePosting: boolean; // P.2
+    postingCertificate: boolean; // P.3
+    // Q
+    fundsAvailability: boolean;
 }
 
 // Simplified Procurement (File Record)
@@ -33,27 +81,48 @@ export interface Procurement {
     id: string;
     prNumber: string;
     description: string;
-    dateAdded: string;
+    dateAdded: string; // Date the record was added to system
 
-    // Location tracking (Cabinet > Shelf > Folder)
-    cabinetId: string;
-    shelfId: string;
-    folderId: string;
+    // Location tracking (Cabinet > Shelf > Folder OR Box)
+    cabinetId?: string;
+    shelfId?: string;
+    folderId?: string;
+    boxId?: string;
 
     // Status
     status: ProcurementStatus;
     urgencyLevel: UrgencyLevel;
+    progressStatus?: ProgressStatus; // New: Pending, Success, Failed
+
+    // Metadata
+    procurementType?: 'Regular Bidding' | 'SVP';
+    projectName?: string;
+    division?: string; // Stores the Division Abbreviation or Name (User requested Dropdown reflecting this)
+    procurementDate?: string; // New: Date Published / Procurement Date (ISO)
+    disposalDate?: string;
+
+    checklist?: Partial<ProcurementChecklist>;
+
+    // Borrower tracking
+    borrowedBy?: string;
+    borrowerDivision?: string; // New: Division of the borrower, separate from file division
+    borrowedDate?: string;
+    returnDate?: string;
+
+    // Stack number (position in folder, only for 'archived'/Available files)
+    stackNumber?: number;
+    stackOrderDate?: number; // Timestamp for consistent stack ordering
 
     // Optional metadata
     tags: string[];
     notes?: string;
 
     // User tracking
-    createdBy: string; // User email
-    createdByName: string; // User display name
-    editedBy?: string; // User email of last editor
-    editedByName?: string; // User display name of last editor
-    lastEditedAt?: string; // ISO timestamp of last edit
+    createdBy: string;
+    createdByName: string;
+    editedBy?: string;
+    editedByName?: string;
+    lastEditedAt?: string;
 
     // Timestamps
     createdAt: string;
@@ -65,6 +134,10 @@ export interface User {
     id: string;
     email: string;
     name: string;
+    role: 'admin' | 'user';
+    status: 'active' | 'inactive';
+    password?: string;
+    createdAt?: string;
 }
 
 export interface AuthState {
@@ -77,6 +150,7 @@ export interface ProcurementFilters {
     cabinetId: string;
     shelfId: string;
     folderId: string;
+    boxId?: string;
     status: ProcurementStatus | '';
     monthYear: string;
     urgencyLevel: UrgencyLevel | '';
@@ -97,8 +171,9 @@ export interface LocationStats {
 
 // Helper type for location display
 export interface LocationPath {
-    cabinet: Cabinet;
-    shelf: Shelf;
-    folder: Folder;
-    fullPath: string; // e.g., "C1-S2-F14"
+    cabinet?: Cabinet;
+    shelf?: Shelf;
+    folder?: Folder;
+    box?: Box;
+    fullPath: string;
 }

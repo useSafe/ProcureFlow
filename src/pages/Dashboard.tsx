@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange } from '@/lib/storage';
 import { initializeDummyData } from '@/lib/initDummyData';
 import { Procurement, Cabinet, Shelf, Folder } from '@/types/procurement';
-import { FileText, Archive, Layers, Package, FolderOpen, Clock, TrendingUp, Database, Download } from 'lucide-react';
+import { FileText, Archive, Layers, Package, FolderOpen, Clock, TrendingUp, Database, Download, Search, Plus, Eye, Map as MapIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ChartContainer,
@@ -16,11 +18,14 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [procurements, setProcurements] = useState<Procurement[]>([]);
   const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Shelves (Tier 1)
   const [shelves, setShelves] = useState<Shelf[]>([]); // Cabinets (Tier 2)
   const [folders, setFolders] = useState<Folder[]>([]); // Folders (Tier 3)
   const [isInitializing, setIsInitializing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   useEffect(() => {
     const unsubProcurements = onProcurementsChange(setProcurements);
@@ -79,8 +84,8 @@ const Dashboard: React.FC = () => {
   }, [cabinets, shelves, folders, procurements]);
 
   const pieData = [
-    { name: 'Active', value: metrics.active, fill: '#10b981' },
-    { name: 'Archived', value: metrics.archived, fill: '#64748b' },
+    { name: 'Borrowed', value: metrics.active, fill: '#f59e0b' },
+    { name: 'Archived', value: metrics.archived, fill: '#10b981' },
   ];
 
   // Top 10 shelves by record count
@@ -91,9 +96,21 @@ const Dashboard: React.FC = () => {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
+  // Filtered suggestions for autocomplete (up to 5 matching PR numbers)
+  const filteredSuggestions = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+
+    return procurements
+      .filter(p =>
+        p.prNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.description.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+      .slice(0, 5);
+  }, [searchQuery, procurements]);
+
   const chartConfig = {
-    active: { label: 'Active', color: '#10b981' },
-    archived: { label: 'Archived', color: '#64748b' },
+    active: { label: 'Borrowed', color: '#f59e0b' },
+    archived: { label: 'Archived', color: '#10b981' },
   };
 
   // Get location string helper
@@ -198,17 +215,17 @@ const Dashboard: React.FC = () => {
 
   const statusCards = [
     {
-      title: 'Active Files',
+      title: 'Borrowed Files',
       value: metrics.active,
       icon: FileText,
-      bg: 'bg-emerald-500',
+      bg: 'bg-amber-500',
       text: 'text-white'
     },
     {
       title: 'Archived Files',
       value: metrics.archived,
       icon: Archive,
-      bg: 'bg-slate-500',
+      bg: 'bg-emerald-500',
       text: 'text-white'
     },
   ];
@@ -234,6 +251,106 @@ const Dashboard: React.FC = () => {
           </Button> */}
         </div>
       </div>
+
+      {/* Quick Actions */}
+      <Card className="border-none bg-[#0f172a] text-white shadow-lg">
+        <CardHeader>
+          <CardTitle className="text-lg">Quick Actions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4">
+            {/* Search Bar */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 z-10" />
+              <Input
+                placeholder="Search by PR Number..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => {
+                  // Delay to allow click on suggestion
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchQuery.trim()) {
+                    navigate(`/procurement/list?search=${encodeURIComponent(searchQuery.trim())}`);
+                    setShowSuggestions(false);
+                  } else if (e.key === 'Escape') {
+                    setShowSuggestions(false);
+                  }
+                }}
+                className="pl-10 bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"
+              />
+
+              {/* Autocomplete Suggestions Dropdown */}
+              {showSuggestions && filteredSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-[#1e293b] border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                  {filteredSuggestions.map((proc, index) => (
+                    <button
+                      key={proc.id}
+                      onClick={() => {
+                        setSearchQuery(proc.prNumber);
+                        setShowSuggestions(false);
+                        navigate(`/procurement/list?search=${encodeURIComponent(proc.prNumber)}`);
+                      }}
+                      className="w-full px-4 py-3 text-left hover:bg-slate-700 transition-colors border-b border-slate-700 last:border-b-0 flex items-start gap-3"
+                    >
+                      <FileText className="h-4 w-4 text-blue-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-white truncate">
+                          {proc.prNumber}
+                        </div>
+                        <div className="text-xs text-slate-400 truncate mt-0.5">
+                          {proc.description}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Button
+                onClick={() => navigate('/procurement/add')}
+                className="bg-blue-600 hover:bg-blue-700 justify-start h-auto py-3"
+              >
+                <Plus className="mr-2 h-5 w-5 text-white" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">Add Procurement</div>
+                  <div className="text-xs opacity-80 text-white">Create new record</div>
+                </div>
+              </Button>
+
+              <Button
+                onClick={() => navigate('/procurement/list')}
+                className="bg-emerald-600 hover:bg-emerald-700 justify-start h-auto py-3"
+              >
+                <Eye className="mr-2 h-5 w-5 text-white" />
+                <div className="text-left">
+                  <div className="font-semibold text-white">View Records</div>
+                  <div className="text-xs opacity-80 text-white">Browse all files</div>
+                </div>
+              </Button>
+
+              <Button
+                onClick={() => navigate('/visual-allocation')}
+                className="bg-purple-600 hover:bg-purple-700 justify-start h-auto py-3"
+              >
+                <MapIcon className="mr-2 h-5 w-5 text-white" />
+                <div className="text-left text-white">
+                  <div className="font-semibold text-white">Visual Allocation</div>
+                  <div className="text-xs opacity-80 text-white">Map view</div>
+                </div>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div id="dashboard-content" className="space-y-6">
 
@@ -306,12 +423,12 @@ const Dashboard: React.FC = () => {
                   <PieChart>
                     <defs>
                       <linearGradient id="activeGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
-                        <stop offset="100%" stopColor="#059669" stopOpacity={1} />
+                        <stop offset="0%" stopColor="#f59e0b" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#d97706" stopOpacity={1} />
                       </linearGradient>
                       <linearGradient id="archivedGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#64748b" stopOpacity={1} />
-                        <stop offset="100%" stopColor="#475569" stopOpacity={1} />
+                        <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#059669" stopOpacity={1} />
                       </linearGradient>
                     </defs>
                     <Pie
@@ -455,8 +572,8 @@ const Dashboard: React.FC = () => {
                     className="flex items-center justify-between p-4 rounded-xl bg-[#1e293b] hover:bg-[#253045] transition-colors group"
                   >
                     <div className="flex items-center gap-4">
-                      <div className={`h-10 w-10 rounded-full flex items-center justify-center ${p.status === 'active' ? 'bg-emerald-500/20 text-emerald-500' :
-                        'bg-slate-500/20 text-slate-500'
+                      <div className={`h-10 w-10 rounded-full flex items-center justify-center ${p.status === 'active' ? 'bg-amber-500/20 text-amber-500' :
+                        'bg-emerald-500/20 text-emerald-500'
                         }`}>
                         {p.status === 'active' ? <FileText className="h-5 w-5" /> :
                           <Archive className="h-5 w-5" />}
@@ -471,10 +588,10 @@ const Dashboard: React.FC = () => {
                     </div>
 
                     <div className="text-right">
-                      <p className={`text-sm font-medium ${p.status === 'active' ? 'text-emerald-500' :
-                        'text-slate-500'
+                      <p className={`text-sm font-medium ${p.status === 'active' ? 'text-amber-500' :
+                        'text-emerald-500'
                         }`}>
-                        {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
+                        {p.status === 'active' ? 'Borrowed' : 'Archived'}
                       </p>
                       <p className="text-xs text-slate-400">
                         {new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

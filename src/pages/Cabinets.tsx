@@ -40,27 +40,33 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { getShelves, onShelvesChange, onCabinetsChange, onFoldersChange, onProcurementsChange } from '@/lib/storage';
+import { addShelf, updateShelf, deleteShelf } from '@/lib/storage'; // Maps to Cabinets Node
 import { Shelf, Cabinet, Folder, Procurement } from '@/types/procurement';
+import { useData } from '@/contexts/DataContext';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, FolderPlus, Eye } from 'lucide-react';
+import { Plus, Pencil, Trash2, FolderPlus, Eye, Package } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 
 const Cabinets: React.FC = () => {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const shelfIdFromUrl = searchParams.get('shelfId');
+    const shelfIdFromUrl = searchParams.get('shelfId'); // Actually Shelf ID (Parent)
 
-    const [shelves, setShelves] = useState<Shelf[]>([]);
-    const [cabinets, setCabinets] = useState<Cabinet[]>([]);
-    const [folders, setFolders] = useState<Folder[]>([]);
-    const [procurements, setProcurements] = useState<Procurement[]>([]);
+    // DataContext
+    // shelves = Tier 1 (S1)
+    // cabinets = Tier 2 (C1)
+    const { shelves, cabinets, folders, procurements } = useData();
+
+    // UI State
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [currentShelf, setCurrentShelf] = useState<Shelf | null>(null);
+    const [currentCabinet, setCurrentCabinet] = useState<Shelf | null>(null); // Type Shelf because it comes from 'shelves' node (Swapped)
 
     // Filter
-    const [filterCabinet, setFilterCabinet] = useState<string>(shelfIdFromUrl || '');
+    const [filterShelfId, setFilterShelfId] = useState<string>(shelfIdFromUrl || '');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [sortField, setSortField] = useState<'name' | 'code' | 'contents'>('name');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
     // Bulk Selection
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -69,45 +75,32 @@ const Cabinets: React.FC = () => {
     // Form State
     const [name, setName] = useState('');
     const [code, setCode] = useState('');
-    const [cabinetId, setCabinetId] = useState('');
+    const [parentShelfId, setParentShelfId] = useState('');
     const [description, setDescription] = useState('');
 
     useEffect(() => {
-        const unsubShelves = onShelvesChange(setShelves);
-        const unsubCabinets = onCabinetsChange(setCabinets);
-        const unsubFolders = onFoldersChange(setFolders);
-        const unsubProcurements = onProcurementsChange(setProcurements);
-        return () => {
-            unsubShelves();
-            unsubCabinets();
-            unsubFolders();
-            unsubProcurements();
-        };
-    }, []);
-
-    useEffect(() => {
         if (shelfIdFromUrl) {
-            setFilterCabinet(shelfIdFromUrl);
+            setFilterShelfId(shelfIdFromUrl);
         }
     }, [shelfIdFromUrl]);
 
     const resetForm = () => {
         setName('');
         setCode('');
-        setCabinetId('');
+        setParentShelfId('');
         setDescription('');
-        setCurrentShelf(null);
+        setCurrentCabinet(null);
     };
 
     const handleAdd = async () => {
-        if (!name || !code || !cabinetId) {
-            toast.error('Name, Code, and Shelf are required');
+        if (!name || !code || !parentShelfId) {
+            toast.error('Name, Code, and Parent Shelf are required');
             return;
         }
 
         try {
-            const { addShelf } = await import('@/lib/storage');
-            await addShelf(cabinetId, name, code, description);
+            // Function name is 'addShelf', but it writes to 'shelves' node which holds Cabinets (C1)
+            await addShelf(parentShelfId, name, code, description);
             setIsAddDialogOpen(false);
             resetForm();
             toast.success('Cabinet added successfully');
@@ -116,21 +109,20 @@ const Cabinets: React.FC = () => {
         }
     };
 
-    const handleEditClick = (shelf: Shelf) => {
-        setCurrentShelf(shelf);
-        setName(shelf.name);
-        setCode(shelf.code);
-        setCabinetId(shelf.cabinetId);
-        setDescription(shelf.description || '');
+    const handleEditClick = (cabinet: Shelf) => {
+        setCurrentCabinet(cabinet);
+        setName(cabinet.name);
+        setCode(cabinet.code);
+        setParentShelfId(cabinet.cabinetId); // shelf.cabinetId points to Parent Shelf ID
+        setDescription(cabinet.description || '');
         setIsEditDialogOpen(true);
     };
 
     const handleUpdate = async () => {
-        if (!currentShelf || !name || !code || !cabinetId) return;
+        if (!currentCabinet || !name || !code || !parentShelfId) return;
 
         try {
-            const { updateShelf } = await import('@/lib/storage');
-            await updateShelf(currentShelf.id, { cabinetId, name, code, description });
+            await updateShelf(currentCabinet.id, { cabinetId: parentShelfId, name, code, description });
             setIsEditDialogOpen(false);
             resetForm();
             toast.success('Cabinet updated successfully');
@@ -141,7 +133,6 @@ const Cabinets: React.FC = () => {
 
     const handleDelete = async (id: string) => {
         try {
-            const { deleteShelf } = await import('@/lib/storage');
             await deleteShelf(id);
             toast.success('Cabinet deleted successfully');
             if (selectedIds.includes(id)) {
@@ -156,7 +147,6 @@ const Cabinets: React.FC = () => {
         if (selectedIds.length === 0) return;
 
         try {
-            const { deleteShelf } = await import('@/lib/storage');
             await Promise.all(selectedIds.map(id => deleteShelf(id)));
             toast.success(`${selectedIds.length} cabinets deleted successfully`);
             setSelectedIds([]);
@@ -168,10 +158,10 @@ const Cabinets: React.FC = () => {
 
     const handleSelectAll = (checked: boolean) => {
         if (checked) {
-            const currentIds = filteredShelves.map(s => s.id);
+            const currentIds = filteredCabinets.map(c => c.id);
             setSelectedIds(prev => Array.from(new Set([...prev, ...currentIds])));
         } else {
-            const currentIds = filteredShelves.map(s => s.id);
+            const currentIds = filteredCabinets.map(c => c.id);
             setSelectedIds(prev => prev.filter(id => !currentIds.includes(id)));
         }
     };
@@ -184,21 +174,29 @@ const Cabinets: React.FC = () => {
         }
     };
 
-    const handleViewFolders = (shelfId: string) => {
-        navigate(`/folders?cabinetId=${shelfId}`);
+    const handleViewFolders = (cabinetId: string) => {
+        navigate(`/folders?cabinetId=${cabinetId}`);
     };
 
-    const getShelfName = (id: string) => {
-        return cabinets.find(c => c.id === id)?.name || 'Unknown';
+    const getParentShelfName = (shelfId: string) => {
+        // Find Shelf (S1) in cabinets array (cabinets holds Tier 1 Shelves)
+        console.log('Looking for parent with ID:', shelfId);
+        console.log('Available cabinets (Tier 1 Shelves):', cabinets.map(c => ({ id: c.id, name: c.name })));
+        const parent = cabinets.find(c => c.id === shelfId);
+        console.log('Found parent:', parent);
+        return parent?.name || 'Unknown';
     };
 
-    const getFolderCount = (shelfId: string) => {
-        return folders.filter(f => f.shelfId === shelfId).length;
-    };
+    // Deep Counts (Cabinet Stats)
+    const getCabinetStats = (cabinetId: string) => {
+        // Cabinet (C1) ID = cabinetId
 
-    const getHierarchyCounts = (shelfId: string) => {
-        const myFolders = folders.filter(f => f.shelfId === shelfId);
+        // Find Folders in this Cabinet
+        // Folder.shelfId -> Cabinet ID
+        const myFolders = folders.filter(f => f.shelfId === cabinetId);
         const myFolderIds = myFolders.map(f => f.id);
+
+        // Find Files in these Folders
         const myFiles = procurements.filter(p => myFolderIds.includes(p.folderId));
 
         return {
@@ -207,13 +205,45 @@ const Cabinets: React.FC = () => {
         };
     };
 
-    const filteredShelves = shelves.filter(shelf => {
-        if (!filterCabinet || filterCabinet === 'all') return true;
-        return shelf.cabinetId === filterCabinet;
-    });
+    // Filtering and Sorting
+    const filteredCabinets = cabinets
+        .filter(cabinet => {
+            // Filter by parent shelf (dropdown)
+            // cabinet.cabinetId -> Parent Shelf ID
+            if (filterShelfId && filterShelfId !== 'all' && cabinet.cabinetId !== filterShelfId) {
+                return false;
+            }
+
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                return (
+                    cabinet.name.toLowerCase().includes(query) ||
+                    cabinet.code.toLowerCase().includes(query) ||
+                    (cabinet.description && cabinet.description.toLowerCase().includes(query))
+                );
+            }
+            return true;
+        })
+        .sort((a, b) => {
+            let comparison = 0;
+            if (sortField === 'name') {
+                comparison = a.name.localeCompare(b.name);
+            } else if (sortField === 'code') {
+                const getCodeNum = (str: string) => {
+                    const match = str.match(/\d+/);
+                    return match ? parseInt(match[0]) : 0;
+                };
+                const aNum = getCodeNum(a.code);
+                const bNum = getCodeNum(b.code);
+                comparison = aNum === bNum ? a.code.localeCompare(b.code) : aNum - bNum;
+            } else if (sortField === 'contents') {
+                comparison = getCabinetStats(a.id).folders - getCabinetStats(b.id).folders;
+            }
+            return sortDirection === 'asc' ? comparison : -comparison;
+        });
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold text-white">Cabinets</h1>
@@ -259,51 +289,27 @@ const Cabinets: React.FC = () => {
                                 <div className="grid grid-cols-4 items-center gap-4">
                                     <Label className="text-right text-slate-300">Parent Shelf</Label>
                                     <select
-                                        value={cabinetId}
-                                        onChange={(e) => setCabinetId(e.target.value)}
+                                        value={parentShelfId}
+                                        onChange={(e) => setParentShelfId(e.target.value)}
                                         className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
                                     >
                                         <option value="">Select Shelf</option>
-                                        {cabinets.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                        {shelves.map(s => (
+                                            <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
                                         ))}
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="name" className="text-right text-slate-300">
-                                        Name
-                                    </Label>
-                                    <Input
-                                        id="name"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                        placeholder="Cabinet 1"
-                                    />
+                                    <Label htmlFor="name" className="text-right text-slate-300">Name</Label>
+                                    <Input id="name" value={name} onChange={(e) => setName(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                                 </div>
                                 <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="code" className="text-right text-slate-300">
-                                        Code
-                                    </Label>
-                                    <Input
-                                        id="code"
-                                        value={code}
-                                        onChange={(e) => setCode(e.target.value)}
-                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                        placeholder="C1"
-                                    />
+                                    <Label htmlFor="code" className="text-right text-slate-300">Code</Label>
+                                    <Input id="code" value={code} onChange={(e) => setCode(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                                 </div>
                                 <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="desc" className="text-right text-slate-300">
-                                        Description
-                                    </Label>
-                                    <Textarea
-                                        id="desc"
-                                        value={description}
-                                        onChange={(e) => setDescription(e.target.value)}
-                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                                        placeholder="Description..."
-                                    />
+                                    <Label htmlFor="desc" className="text-right text-slate-300">Description</Label>
+                                    <Textarea id="desc" value={description} onChange={(e) => setDescription(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                                 </div>
                             </div>
                             <DialogFooter>
@@ -315,22 +321,46 @@ const Cabinets: React.FC = () => {
                 </div>
             </div>
 
-            {/* Filter */}
             <Card className="border-none bg-[#0f172a] shadow-lg">
                 <CardContent className="p-4">
-                    <div className="flex gap-4 items-center">
-                        <Label className="text-slate-300 whitespace-nowrap">Filter by Shelves:</Label>
-                        <Select value={filterCabinet} onValueChange={setFilterCabinet}>
+                    <div className="flex gap-4 items-center flex-wrap">
+                        <Input
+                            placeholder="Search cabinets..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-[250px] bg-[#1e293b] border-slate-700 text-white"
+                        />
+                        <Label className="text-slate-300 whitespace-nowrap">Filter:</Label>
+                        <Select value={filterShelfId} onValueChange={setFilterShelfId}>
                             <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
                                 <SelectValue placeholder="All Shelves" />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                 <SelectItem value="all">All Shelves</SelectItem>
-                                {cabinets.map(c => (
-                                    <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
+                                {shelves.map(s => (
+                                    <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
+                        <Label className="text-slate-300 whitespace-nowrap">Sort:</Label>
+                        <Select value={sortField} onValueChange={(value) => setSortField(value as any)}>
+                            <SelectTrigger className="w-[120px] bg-[#1e293b] border-slate-700 text-white">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                <SelectItem value="name">Name</SelectItem>
+                                <SelectItem value="code">Code</SelectItem>
+                                <SelectItem value="contents">Contents</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                            className="bg-[#1e293b] border-slate-700 text-white hover:bg-slate-700"
+                        >
+                            {sortDirection === 'asc' ? '↑' : '↓'}
+                        </Button>
                     </div>
                 </CardContent>
             </Card>
@@ -342,63 +372,63 @@ const Cabinets: React.FC = () => {
                             <TableRow className="border-slate-800 hover:bg-transparent">
                                 <TableHead className="w-[50px]">
                                     <Checkbox
-                                        checked={filteredShelves.length > 0 && filteredShelves.every(s => selectedIds.includes(s.id))}
+                                        checked={filteredCabinets.length > 0 && filteredCabinets.every(c => selectedIds.includes(c.id))}
                                         onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
                                         className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                                     />
                                 </TableHead>
-                                <TableHead className="text-slate-300">Details</TableHead>
+                                <TableHead className="text-slate-300">Name</TableHead>
                                 <TableHead className="text-slate-300">Parent Shelf</TableHead>
                                 <TableHead className="text-slate-300">Code</TableHead>
-                                <TableHead className="text-slate-300">Folders</TableHead>
+                                <TableHead className="text-slate-300">Contents</TableHead>
                                 <TableHead className="text-right text-slate-300">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {filteredShelves.length === 0 ? (
+                            {filteredCabinets.length === 0 ? (
                                 <TableRow className="border-slate-800">
                                     <TableCell colSpan={6} className="h-24 text-center text-slate-500">
                                         No cabinets found. Add your first cabinet.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                filteredShelves.map((shelf) => (
-                                    <TableRow key={shelf.id} className="border-slate-800 hover:bg-[#1e293b]">
+                                filteredCabinets.map((cabinet) => (
+                                    <TableRow key={cabinet.id} className="border-slate-800 hover:bg-[#1e293b]">
                                         <TableCell>
                                             <Checkbox
-                                                checked={selectedIds.includes(shelf.id)}
-                                                onCheckedChange={(checked) => handleSelectOne(shelf.id, checked as boolean)}
+                                                checked={selectedIds.includes(cabinet.id)}
+                                                onCheckedChange={(checked) => handleSelectOne(cabinet.id, checked as boolean)}
                                                 className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                                             />
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-3">
                                                 <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-                                                    <FolderPlus className="h-5 w-5" />
+                                                    <Package className="h-5 w-5" />
                                                 </div>
                                                 <div>
-                                                    <p className="font-medium text-white">{shelf.name}</p>
-                                                    <p className="text-xs text-slate-400">{shelf.description || 'No description'}</p>
+                                                    <p className="font-medium text-white">{cabinet.name}</p>
+                                                    <p className="text-xs text-slate-400">{cabinet.description || 'No description'}</p>
                                                 </div>
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-slate-300">
-                                            {getShelfName(shelf.cabinetId)}
+                                            {getParentShelfName(cabinet.cabinetId)}
                                         </TableCell>
                                         <TableCell>
                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
-                                                {shelf.code}
+                                                {cabinet.code}
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-slate-300">
-                                            {getFolderCount(shelf.id)} folders
+                                            {getCabinetStats(cabinet.id).folders} folders
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    onClick={() => handleViewFolders(shelf.id)}
+                                                    onClick={() => handleViewFolders(cabinet.id)}
                                                     className="h-8 bg-emerald-600/10 border-emerald-600/20 text-emerald-500 hover:bg-emerald-600/20 hover:text-emerald-400"
                                                 >
                                                     <Eye className="h-4 w-4 mr-1" />
@@ -407,7 +437,7 @@ const Cabinets: React.FC = () => {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    onClick={() => handleEditClick(shelf)}
+                                                    onClick={() => handleEditClick(cabinet)}
                                                     className="h-8 w-8 text-slate-400 hover:text-white hover:bg-slate-700"
                                                 >
                                                     <Pencil className="h-4 w-4" />
@@ -427,38 +457,38 @@ const Cabinets: React.FC = () => {
                                                             <AlertDialogTitle>Delete Cabinet?</AlertDialogTitle>
                                                             <AlertDialogDescription className="text-slate-400">
                                                                 {(() => {
-                                                                    const counts = getHierarchyCounts(shelf.id);
-                                                                    const hasContents = counts.folders > 0 || counts.files > 0;
+                                                                    const stats = getCabinetStats(cabinet.id);
+                                                                    const hasContents = stats.folders > 0 || stats.files > 0;
 
                                                                     if (hasContents) {
                                                                         return (
                                                                             <div className="text-red-400 font-medium border border-red-400/20 bg-red-400/10 p-3 rounded-md">
                                                                                 Cannot delete this cabinet.<br />
                                                                                 It contains:<br />
-                                                                                <ul className="list-disc list-inside mt-1 ml-2">
-                                                                                    {counts.folders > 0 && <li><strong>{counts.folders}</strong> Folder{counts.folders !== 1 ? 's' : ''}</li>}
-                                                                                    {counts.files > 0 && <li><strong>{counts.files}</strong> File{counts.files !== 1 ? 's' : ''}</li>}
+                                                                                <ul className="list-disc list-inside mt-1 ml-2 text-sm">
+                                                                                    {stats.folders > 0 && <li><strong>{stats.folders}</strong> Folder{stats.folders !== 1 ? 's' : ''}</li>}
+                                                                                    {stats.files > 0 && <li><strong>{stats.files}</strong> File{stats.files !== 1 ? 's' : ''}</li>}
                                                                                 </ul>
                                                                                 <br />
                                                                                 Please delete all contents first.
                                                                             </div>
                                                                         );
                                                                     }
-                                                                    return <span>This will permanently delete <strong>{shelf.name}</strong> and all folders inside it.</span>;
+                                                                    return <span>This will permanently delete <strong>{cabinet.name}</strong>.</span>;
                                                                 })()}
                                                             </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
-                                                                onClick={() => handleDelete(shelf.id)}
+                                                                onClick={() => handleDelete(cabinet.id)}
                                                                 disabled={(() => {
-                                                                    const c = getHierarchyCounts(shelf.id);
-                                                                    return c.folders > 0 || c.files > 0;
+                                                                    const stats = getCabinetStats(cabinet.id);
+                                                                    return stats.folders > 0 || stats.files > 0;
                                                                 })()}
                                                                 className={(() => {
-                                                                    const c = getHierarchyCounts(shelf.id);
-                                                                    return (c.folders > 0 || c.files > 0)
+                                                                    const stats = getCabinetStats(cabinet.id);
+                                                                    return (stats.folders > 0 || stats.files > 0)
                                                                         ? "bg-slate-700 text-slate-400 cursor-not-allowed hover:bg-slate-700"
                                                                         : "bg-red-600 hover:bg-red-700 text-white";
                                                                 })()}
@@ -478,58 +508,39 @@ const Cabinets: React.FC = () => {
                 </CardContent>
             </Card>
 
-            {/* Edit Dialog */}
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
                 <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
                     <DialogHeader>
                         <DialogTitle>Edit Cabinet</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Update cabinet details.
+                        </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right text-slate-300">Parent Shelf</Label>
                             <select
-                                value={cabinetId}
-                                onChange={(e) => setCabinetId(e.target.value)}
+                                value={parentShelfId}
+                                onChange={(e) => setParentShelfId(e.target.value)}
                                 className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
                             >
                                 <option value="">Select Shelf</option>
-                                {cabinets.map(c => (
-                                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                {shelves.map(s => (
+                                    <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
                                 ))}
                             </select>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="edit-name" className="text-right text-slate-300">
-                                Name
-                            </Label>
-                            <Input
-                                id="edit-name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                            />
+                            <Label htmlFor="edit-name" className="text-right text-slate-300">Name</Label>
+                            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="edit-code" className="text-right text-slate-300">
-                                Code
-                            </Label>
-                            <Input
-                                id="edit-code"
-                                value={code}
-                                onChange={(e) => setCode(e.target.value)}
-                                className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                            />
+                            <Label htmlFor="edit-code" className="text-right text-slate-300">Code</Label>
+                            <Input id="edit-code" value={code} onChange={(e) => setCode(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="edit-desc" className="text-right text-slate-300">
-                                Description
-                            </Label>
-                            <Textarea
-                                id="edit-desc"
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                className="col-span-3 bg-[#1e293b] border-slate-700 text-white"
-                            />
+                            <Label htmlFor="edit-desc" className="text-right text-slate-300">Description</Label>
+                            <Textarea id="edit-desc" value={description} onChange={(e) => setDescription(e.target.value)} className="col-span-3 bg-[#1e293b] border-slate-700 text-white" />
                         </div>
                     </div>
                     <DialogFooter>
