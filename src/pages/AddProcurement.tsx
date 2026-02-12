@@ -447,7 +447,7 @@ const AddProcurement: React.FC = () => {
                                         { key: 'minutesBidOpening', label: 'J. Minutes of Bid Opening' },
                                         { key: 'postingCertificate', label: 'P.3. Posting Certificate' },
                                         { key: 'resultEligibilityCheck', label: 'K. Results of Eligibility Check/Screening' },
-                                        { key: 'fundsAvailability', label: 'Q. CAertificate of Funds Availability, Purchase Request, Project/Activity Brief, TOR & APP' },
+                                        { key: 'fundsAvailability', label: 'Q. Certificate of Funds Availability, Purchase Request, Project/Activity Brief, TOR & APP' },
                                     ].map((item) => (
                                         <div key={item.key} className="flex items-center space-x-2 p-2 rounded hover:bg-slate-800/50">
                                             <Checkbox

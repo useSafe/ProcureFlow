@@ -188,8 +188,13 @@ const Folders: React.FC = () => {
         navigate(`/procurement/list?folderId=${folderId}`);
     };
 
-    const getParentCabinetName = (cabinetId: string) => {
-        return cabinets.find(c => c.id === cabinetId)?.name || 'Unknown';
+    // Replace the getParentCabinetName function
+    const getParentCabinetName = (shelfId: string): string => {
+        // Since data is swapped: shelves array contains Tier 2 (Cabinets)
+        // and folders array contains Tier 3 (Folders)
+        // Each Folder has shelfId pointing to Tier 2 (in shelves array)
+        const parentCabinet = shelves.find(s => s.id === shelfId);
+        return parentCabinet ? `${parentCabinet.name} (${parentCabinet.code})` : 'Unknown';
     };
 
     // Deep Counts (Folder Stats)

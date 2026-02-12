@@ -203,15 +203,13 @@ const ProcurementDetailsDialog: React.FC<ProcurementDetailsDialogProps> = ({
                                                 {[
                                                     { key: 'minutesPreBid', label: 'M. Minutes of Pre-Bid Conference' },
                                                     { key: 'biddingDocuments', label: 'N. Bidding Documents' },
-                                                    { key: 'inviteObservers', label: 'O. Letter Invitation to Observers' },
-                                                    { key: 'officialReceipt', label: 'O.1. Official Receipt' },
-                                                    { key: 'boardResolution', label: 'O.2. Board Resolution' },
-                                                    { key: 'philgepsAwardNotice', label: 'O.3. PhilGEPS Award Notice Abstract' },
-                                                    { key: 'additionalDocument', label: 'O.4. Additional Document' },
-                                                    { key: 'philgepsPosting', label: 'P. PhilGEPS Posting' },
-                                                    { key: 'websitePosting', label: 'P.1. Website Posting' },
-                                                    { key: 'postingCertificate', label: 'P.2. Posting Certificate' },
-                                                    { key: 'newspaperPosting', label: 'P.3. Newspaper Posting' },
+                                                    { key: 'inviteObservers', label: 'O.1. Letter Invitation to Observers' },
+                                                    { key: 'officialReceipt', label: 'O.2. Official Receipt' },
+                                                    { key: 'boardResolution', label: 'O.3. Board Resolution' },
+                                                    { key: 'philgepsAwardNotice', label: 'O.4. PhilGEPS Award Notice Abstract' },
+                                                    { key: 'philgepsPosting', label: 'P.1. PhilGEPS Posting' },
+                                                    { key: 'websitePosting', label: 'P.2. Website Posting' },
+                                                    { key: 'postingCertificate', label: 'P.3. Posting Certificate' },
                                                     { key: 'fundsAvailability', label: 'Q. CAF, PR, TOR & APP' },
                                                 ].map((item) => (
                                                     <div key={item.key} className="flex items-start gap-3 p-2 rounded hover:bg-slate-800/30 transition-colors">

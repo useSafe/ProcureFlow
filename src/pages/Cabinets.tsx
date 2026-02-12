@@ -178,13 +178,13 @@ const Cabinets: React.FC = () => {
         navigate(`/folders?cabinetId=${cabinetId}`);
     };
 
-    const getParentShelfName = (shelfId: string) => {
-        // Find Shelf (S1) in cabinets array (cabinets holds Tier 1 Shelves)
-        console.log('Looking for parent with ID:', shelfId);
-        console.log('Available cabinets (Tier 1 Shelves):', cabinets.map(c => ({ id: c.id, name: c.name })));
-        const parent = cabinets.find(c => c.id === shelfId);
-        console.log('Found parent:', parent);
-        return parent?.name || 'Unknown';
+    // Replace the getParentShelfName function
+    const getParentShelfName = (cabinetId: string): string => {
+        // Since data is swapped: cabinets array contains Tier 1 (Shelves)
+        // and shelves array contains Tier 2 (Cabinets)
+        // Each Tier 2 item (in shelves array) has cabinetId pointing to Tier 1 (in cabinets array)
+        const parentShelf = cabinets.find(c => c.id === cabinetId);
+        return parentShelf ? `${parentShelf.name} (${parentShelf.code})` : 'Unknown';
     };
 
     // Deep Counts (Cabinet Stats)

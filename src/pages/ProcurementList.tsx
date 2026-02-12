@@ -1396,14 +1396,43 @@ const ProcurementList: React.FC = () => {
                                             <p className="text-xs text-slate-400">Checklist for Regular Bidding</p>
                                         </div>
                                         <div className="flex gap-2">
+                                            {/* Replace the Check All button */}
                                             <Button
                                                 type="button"
                                                 variant="outline"
                                                 size="sm"
                                                 className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
                                                 onClick={() => {
-                                                    const allChecked = Object.keys(checklistItems).reduce((acc, key) => ({ ...acc, [key]: true }), {});
-                                                    setEditingProcurement({ ...editingProcurement, checklist: allChecked as any });
+                                                    // Create a new checklist object with all items checked
+                                                    const allChecked = {
+                                                        noticeToProceed: true,
+                                                        contractOfAgreement: true,
+                                                        noticeOfAward: true,
+                                                        bacResolutionAward: true,
+                                                        postQualReport: true,
+                                                        noticePostQual: true,
+                                                        bacResolutionPostQual: true,
+                                                        abstractBidsEvaluated: true,
+                                                        twgBidEvalReport: true,
+                                                        minutesBidOpening: true,
+                                                        resultEligibilityCheck: true,
+                                                        biddersTechFinancialProposals: true,
+                                                        minutesPreBid: true,
+                                                        biddingDocuments: true,
+                                                        inviteObservers: true,
+                                                        officialReceipt: true,
+                                                        boardResolution: true,
+                                                        philgepsAwardNotice: true,
+                                                        philgepsPosting: true,
+                                                        websitePosting: true,
+                                                        postingCertificate: true,
+                                                        fundsAvailability: true
+                                                    };
+                                                    
+                                                    setEditingProcurement(prev => ({
+                                                        ...prev!,
+                                                        checklist: allChecked
+                                                    }));
                                                 }}
                                             >
                                                 Check All
@@ -1412,10 +1441,38 @@ const ProcurementList: React.FC = () => {
                                                 type="button"
                                                 variant="outline"
                                                 size="sm"
-                                                className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700"
+                                                className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
                                                 onClick={() => {
-                                                    const allUnchecked = Object.keys(checklistItems).reduce((acc, key) => ({ ...acc, [key]: false }), {});
-                                                    setEditingProcurement({ ...editingProcurement, checklist: allUnchecked as any });
+                                                    // Create a new checklist object with all items unchecked
+                                                    const allUnchecked = {
+                                                        noticeToProceed: false,
+                                                        contractOfAgreement: false,
+                                                        noticeOfAward: false,
+                                                        bacResolutionAward: false,
+                                                        postQualReport: false,
+                                                        noticePostQual: false,
+                                                        bacResolutionPostQual: false,
+                                                        abstractBidsEvaluated: false,
+                                                        twgBidEvalReport: false,
+                                                        minutesBidOpening: false,
+                                                        resultEligibilityCheck: false,
+                                                        biddersTechFinancialProposals: false,
+                                                        minutesPreBid: false,
+                                                        biddingDocuments: false,
+                                                        inviteObservers: false,
+                                                        officialReceipt: false,
+                                                        boardResolution: false,
+                                                        philgepsAwardNotice: false,
+                                                        philgepsPosting: false,
+                                                        websitePosting: false,
+                                                        postingCertificate: false,
+                                                        fundsAvailability: false
+                                                    };
+                                                    
+                                                    setEditingProcurement(prev => ({
+                                                        ...prev!,
+                                                        checklist: allUnchecked
+                                                    }));
                                                 }}
                                             >
                                                 Clear All
