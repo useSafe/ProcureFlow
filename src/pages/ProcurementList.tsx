@@ -1506,7 +1506,7 @@ const ProcurementList: React.FC = () => {
                                 </div>
                             )}
 
-                            <div className="space-y-2">
+                            {/* <div className="space-y-2">
                                 <Label className="text-slate-300">Status</Label>
                                 <Select
                                     value={editingProcurement.status}
@@ -1520,7 +1520,7 @@ const ProcurementList: React.FC = () => {
                                         <SelectItem value="archived">Archived</SelectItem>
                                     </SelectContent>
                                 </Select>
-                            </div>
+                            </div> */}
 
                             {editingProcurement.status === 'active' && (
                                 <div className="grid grid-cols-2 gap-4 bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
@@ -1665,8 +1665,8 @@ const ProcurementList: React.FC = () => {
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="active">Borrowed</SelectItem>
                                             <SelectItem value="archived">Archived</SelectItem>
+                                            <SelectItem value="active">Borrowed</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
