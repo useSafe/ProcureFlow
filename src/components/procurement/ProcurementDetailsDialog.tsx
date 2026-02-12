@@ -159,7 +159,7 @@ const ProcurementDetailsDialog: React.FC<ProcurementDetailsDialogProps> = ({
                                     <h3 className="text-lg font-semibold border-b border-slate-800 pb-2 mb-3">Documents Handed Over</h3>
                                     
                                     {/* Scrollable container with custom scrollbar */}
-                                    <div className="max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                    <div className="max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
                                         <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
                                             {/* LEFT COLUMN */}
                                             <div className="space-y-3">
