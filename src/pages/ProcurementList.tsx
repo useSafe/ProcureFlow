@@ -58,6 +58,7 @@ import {
     Pencil,
     ChevronLeft,
     ChevronRight,
+    ChevronDown,
     MapPin,
     FilterX,
     Download,
@@ -162,7 +163,8 @@ const ProcurementList: React.FC = () => {
     });
 
     // New: multi-select status filter state (empty = all)
-    const [statusFilters, setStatusFilters] = useState<string[]>([]);
+    const [progressStatusFilters, setProgressStatusFilters] = useState<string[]>([]);
+    const [statusFilters, setStatusFilters] = useState<string[]>([]); // Procurement Status (Active/Archived)
 
     // Phase 6 Filters
     const [divisions, setDivisions] = useState<Division[]>([]);
@@ -188,6 +190,13 @@ const ProcurementList: React.FC = () => {
     // Sorting state
     const [sortField, setSortField] = useState<'name' | 'prNumber' | 'date' | 'stackNumber'>('date');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    // Relocate Modal State
+    const [isRelocateDialogOpen, setIsRelocateDialogOpen] = useState(false);
+    const [relocateProcurement, setRelocateProcurement] = useState<Procurement | null>(null);
+    const [newStackNumber, setNewStackNumber] = useState<number | ''>('');
+
+    const isFolderView = !!filters.folderId && filters.folderId !== 'all_folders';
 
     const itemsPerPage = 20;
 
@@ -245,7 +254,13 @@ const ProcurementList: React.FC = () => {
     const [borrowEditModal, setBorrowEditModal] = useState<{
         procurement: Procurement;
         borrowedBy: string;
-        division: string;
+        borrowerDivision: string;
+    } | null>(null);
+
+    // Return modal
+    const [returnModal, setReturnModal] = useState<{
+        procurement: Procurement;
+        returnedBy: string;
     } | null>(null);
 
     // Helper functions for status
@@ -261,36 +276,28 @@ const ProcurementList: React.FC = () => {
 
     // Status change workflow
     const handleStatusChange = (procurement: Procurement, newStatus: ProcurementStatus) => {
-        setPendingStatusChange({ procurement, newStatus });
-        setIsStatusConfirmOpen(true);
-    };
-
-    const proceedStatusChange = () => {
-        if (!pendingStatusChange) return;
-
-        const { procurement, newStatus } = pendingStatusChange;
-
         if (newStatus === 'active') {
             // Going to Borrowed - show edit modal
             setBorrowEditModal({
                 procurement,
                 borrowedBy: procurement.borrowedBy || '',
-                division: procurement.division || ''
+                borrowerDivision: procurement.borrowerDivision || ''
             });
-            setIsStatusConfirmOpen(false);
-            setPendingStatusChange(null);
         } else {
-            // Going to Available - just update
-            confirmReturnFile(procurement);
+            // Going to Available (Archived) - show return modal
+            setReturnModal({
+                procurement,
+                returnedBy: ''
+            });
         }
     };
 
     const saveBorrowChanges = async () => {
         if (!borrowEditModal) return;
 
-        const { procurement, borrowedBy, division } = borrowEditModal;
+        const { procurement, borrowedBy, borrowerDivision } = borrowEditModal;
 
-        if (!borrowedBy || !division) {
+        if (!borrowedBy || !borrowerDivision) {
             toast.error('Please fill in all required fields');
             return;
         }
@@ -299,7 +306,7 @@ const ProcurementList: React.FC = () => {
             await updateProcurement(procurement.id, {
                 status: 'active',
                 borrowedBy,
-                division,
+                borrowerDivision,
                 borrowedDate: new Date().toISOString()
             });
 
@@ -313,18 +320,21 @@ const ProcurementList: React.FC = () => {
         }
     };
 
-    const confirmReturnFile = async (procurement: Procurement) => {
+    const confirmReturnFile = async () => {
+        if (!returnModal) return;
+        const { procurement, returnedBy } = returnModal;
+
         try {
             await updateProcurement(procurement.id, {
                 status: 'archived',
-                returnDate: new Date().toISOString()
+                returnDate: new Date().toISOString(),
+                returnedBy: returnedBy || undefined
             });
 
             // Recalculate stack numbers
             await updateStackNumbersForFolder(procurement.folderId);
 
-            setIsStatusConfirmOpen(false);
-            setPendingStatusChange(null);
+            setReturnModal(null);
             toast.success('File returned and marked as archived');
         } catch (error) {
             toast.error('Failed to return file');
@@ -428,9 +438,17 @@ const ProcurementList: React.FC = () => {
     // build status options based on current procurements (fall back to common ones)
     // Filter options
     const statusOptions: ProcurementStatus[] = ['active', 'archived'];
+    const progressStatusOptions = ['Pending', 'Success', 'Failed', 'Cancelled'];
 
     const toggleStatusFilter = (status: string) => {
         setStatusFilters(prev => {
+            if (prev.includes(status)) return prev.filter(s => s !== status);
+            return [...prev, status];
+        });
+    };
+
+    const toggleProgressStatusFilter = (status: string) => {
+        setProgressStatusFilters(prev => {
             if (prev.includes(status)) return prev.filter(s => s !== status);
             return [...prev, status];
         });
@@ -447,6 +465,7 @@ const ProcurementList: React.FC = () => {
 
         // New: multi-select status filtering (empty -> all)
         const matchesStatus = statusFilters.length === 0 || statusFilters.includes(procurement.status);
+        const matchesProgressStatus = progressStatusFilters.length === 0 || progressStatusFilters.includes(procurement.progressStatus || 'Pending');
 
         const matchesUrgency = !filters.urgencyLevel || filters.urgencyLevel === 'all_urgency' || procurement.urgencyLevel === (filters.urgencyLevel as UrgencyLevel);
 
@@ -467,7 +486,7 @@ const ProcurementList: React.FC = () => {
 
         const matchesBox = !filters.boxId || procurement.boxId === filters.boxId;
 
-        return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesUrgency && matchesDivision && matchesType && matchesDate && matchesBox;
+        return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesProgressStatus && matchesUrgency && matchesDivision && matchesType && matchesDate && matchesBox;
     }).sort((a, b) => {
         let comparison = 0;
 
@@ -509,6 +528,7 @@ const ProcurementList: React.FC = () => {
         });
         // clear multi-select status
         setStatusFilters([]);
+        setProgressStatusFilters([]);
         setFilterDivision('all_divisions');
         setFilterType('all_types');
         setFilterDateRange(undefined);
@@ -585,6 +605,70 @@ const ProcurementList: React.FC = () => {
         }
     };
 
+    const handleRelocateClick = (procurement: Procurement) => {
+        setRelocateProcurement(procurement);
+        setNewStackNumber(procurement.stackNumber || '');
+        setIsRelocateDialogOpen(true);
+    };
+
+    const handleRelocateSave = async () => {
+        if (!relocateProcurement || !newStackNumber) return;
+
+        const folderId = relocateProcurement.folderId;
+        if (!folderId) return;
+
+        // Get all archived items in this folder, sorted by current stack number
+        const folderItems = procurements
+            .filter(p => p.folderId === folderId && p.status === 'archived' && p.id !== relocateProcurement.id)
+            .sort((a, b) => (a.stackNumber || 0) - (b.stackNumber || 0));
+
+        let targetStack = parseInt(String(newStackNumber));
+        if (isNaN(targetStack) || targetStack < 1) targetStack = 1;
+        if (targetStack > folderItems.length + 1) targetStack = folderItems.length + 1;
+
+        // Find prev and next items around the insertion point
+        // Indices are 0-based. Stack numbers are 1-based.
+        // To be at Stack X, we insert at index X-1.
+        // Prev item is at index X-2. Next item is at index X-1.
+
+        let newOrderDate: number;
+
+        if (targetStack === 1) {
+            // Insert at start
+            const firstItem = folderItems[0];
+            const firstDate = firstItem?.stackOrderDate || new Date(firstItem?.dateAdded || Date.now()).getTime();
+            newOrderDate = firstDate - 100000; // Subtract arbitrary time
+        } else if (targetStack > folderItems.length) {
+            // Insert at end
+            const lastItem = folderItems[folderItems.length - 1];
+            const lastDate = lastItem?.stackOrderDate || new Date(lastItem?.dateAdded || Date.now()).getTime();
+            newOrderDate = lastDate + 100000;
+        } else {
+            // Insert in middle
+            const prevItem = folderItems[targetStack - 2];
+            const nextItem = folderItems[targetStack - 1];
+
+            const prevDate = prevItem?.stackOrderDate || new Date(prevItem?.dateAdded || 0).getTime();
+            const nextDate = nextItem?.stackOrderDate || new Date(nextItem?.dateAdded || 0).getTime();
+
+            newOrderDate = (prevDate + nextDate) / 2;
+        }
+
+        try {
+            await updateProcurement(
+                relocateProcurement.id,
+                { ...relocateProcurement, stackOrderDate: newOrderDate },
+                user?.email,
+                user?.name
+            );
+            toast.success('Stack number updated');
+            setIsRelocateDialogOpen(false);
+            setRelocateProcurement(null);
+        } catch (error) {
+            toast.error('Failed to update stack number');
+        }
+    };
+
     // Status change handlers
 
 
@@ -604,24 +688,52 @@ const ProcurementList: React.FC = () => {
         }
     };
 
-    const exportToCSV = () => {
-        const exportData = filteredProcurements.map(p => {
-            const shelf = cabinets.find(c => c.id === p.cabinetId);
-            const cabinet = shelves.find(s => s.id === p.shelfId);
-            const folder = folders.find(f => f.id === p.folderId);
-            const box = boxes.find(b => b.id === p.boxId);
+    const handleExportCSV = () => {
+        // Use ALL procurements, not just filtered ones
+        const exportData = procurements.map(p => {
+            const checklist = p.checklist || {};
 
             return {
                 'PR Number': p.prNumber,
+                'Project Name': p.projectName || '',
                 'Description': p.description,
+                'Division': p.division || '',
                 'Location': getLocationString(p),
-                'Shelf': shelf?.name || '',
-                'Cabinet': cabinet?.name || '',
-                'Folder': folder?.name || '',
-                'Box': box?.name || '',
-                'Status': p.status.charAt(0).toUpperCase() + p.status.slice(1),
+                'Status': p.status,
+                'Progress Status': p.progressStatus || 'Pending',
+                'Stack Number': p.stackNumber || '',
+                'Borrowed By': p.borrowedBy || '',
+                'Borrower Division': p.borrowerDivision || '',
+                'Borrowed Date': p.borrowedDate ? format(new Date(p.borrowedDate), 'MMM d, yyyy') : '',
+                'Return By': p.returnedBy || '',
+                'Return Date': p.returnDate ? format(new Date(p.returnDate), 'MMM d, yyyy') : '',
+                'Procurement Date': p.procurementDate ? format(new Date(p.procurementDate), 'MMM d, yyyy') : '',
+
+                // Documents Handed Over (Checklist A-Q)
+                'A': checklist.noticeToProceed ? 'Yes' : '',
+                'B': checklist.contractOfAgreement ? 'Yes' : '',
+                'C': checklist.noticeOfAward ? 'Yes' : '',
+                'D': checklist.bacResolutionAward ? 'Yes' : '',
+                'E': checklist.postQualReport ? 'Yes' : '',
+                'F': checklist.noticePostQual ? 'Yes' : '',
+                'G': checklist.bacResolutionPostQual ? 'Yes' : '',
+                'H': checklist.abstractBidsEvaluated ? 'Yes' : '',
+                'I': checklist.twgBidEvalReport ? 'Yes' : '',
+                'J': checklist.minutesBidOpening ? 'Yes' : '',
+                'K': checklist.resultEligibilityCheck ? 'Yes' : '',
+                'L': checklist.biddersTechFinancialProposals ? 'Yes' : '',
+                'M': checklist.minutesPreBid ? 'Yes' : '',
+                'N': checklist.biddingDocuments ? 'Yes' : '',
+                'O.1': checklist.inviteObservers ? 'Yes' : '',
+                'O.2': checklist.officialReceipt ? 'Yes' : '',
+                'O.3': checklist.boardResolution ? 'Yes' : '',
+                'O.4': checklist.philgepsAwardNotice ? 'Yes' : '',
+                'P.1': checklist.philgepsPosting ? 'Yes' : '',
+                'P.2': checklist.websitePosting ? 'Yes' : '',
+                'P.3': checklist.postingCertificate ? 'Yes' : '',
+                'Q': checklist.fundsAvailability ? 'Yes' : '',
+
                 'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
-                'Created At': format(new Date(p.createdAt), 'MMM d, yyyy HH:mm'),
             };
         });
 
@@ -635,32 +747,7 @@ const ProcurementList: React.FC = () => {
         toast.success('Exported to CSV successfully');
     };
 
-    const handleExportExcel = () => {
-        const exportData = filteredProcurements.map(p => ({
-            'PR Number': p.prNumber,
-            'Description': p.description,
-            'Project Name': p.projectName || '',
-            'Division': p.division || '',
-            'Location': getLocationString(p),
-            'Status': p.status,
-            'Progress Status': p.progressStatus || 'Pending',
-            'Urgency': p.urgencyLevel,
-            'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
-            'Procurement Date': p.procurementDate ? format(new Date(p.procurementDate), 'MMM d, yyyy') : '',
-            'Disposal Date': p.disposalDate ? format(new Date(p.disposalDate), 'MMM d, yyyy') : '',
-            'Tags': p.tags.join(', '),
-            'Notes': p.notes || '',
-        }));
 
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Procurements');
-
-        const filename = `procurement-records-${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
-        XLSX.writeFile(wb, filename);
-
-        toast.success('Excel file exported successfully');
-    };
 
     const handleExportPDFSummary = () => {
         const doc = new jsPDF();
@@ -806,54 +893,59 @@ const ProcurementList: React.FC = () => {
                         </AlertDialog>
                     )}
 
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button className="bg-emerald-600 hover:bg-emerald-700">
-                                <Download className="mr-2 h-4 w-4" />
-                                Export
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-[#1e293b] border-slate-700 text-white">
-                            <DropdownMenuItem
-                                onClick={exportToCSV}
-                                className="cursor-pointer focus:bg-slate-700"
-                            >
-                                <FileText className="mr-2 h-4 w-4" />
-                                Export as CSV
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onClick={handleExportExcel}
-                                className="cursor-pointer focus:bg-slate-700"
-                            >
-                                <FileText className="mr-2 h-4 w-4" />
-                                Export as Excel
-                            </DropdownMenuItem>
-
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button onClick={handleExportCSV} className="bg-emerald-600 hover:bg-emerald-700">
+                        <FileText className="mr-2 h-4 w-4" />
+                        Export as CSV
+                    </Button>
                 </div>
             </div>
 
             <Card className="border-none bg-[#0f172a] shadow-lg">
                 <CardHeader className="pb-3">
                     <div className="flex flex-col gap-4">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
-                            <Input
-                                placeholder="Search PR Number or description..."
-                                className="pl-9 bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"
-                                value={filters.search}
-                                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                            />
+                        {/* Row 1: Search and Date Range */}
+                        <div className="flex flex-col sm:flex-row gap-4">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
+                                <Input
+                                    placeholder="Search PR Number or description..."
+                                    className="pl-9 bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500 h-8 text-xs"
+                                    value={filters.search}
+                                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                                />
+                            </div>
+                            {/* Date Range Filter (Typable) */}
+                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1 min-w-fit">
+                                <div className="flex items-center gap-1 px-2">
+                                    <span className="text-xs text-slate-400">From:</span>
+                                    <input
+                                        type="date"
+                                        className="bg-transparent border-none text-white text-xs focus:ring-0 w-[110px] h-6"
+                                        value={filterDateRange?.from ? format(filterDateRange.from, 'yyyy-MM-dd') : ''}
+                                        onChange={(e) => setFilterDateRange(prev => ({ from: e.target.value ? new Date(e.target.value) : undefined, to: prev?.to }))}
+                                    />
+                                </div>
+                                <div className="flex items-center gap-1 px-2 border-l border-slate-700">
+                                    <span className="text-xs text-slate-400">To:</span>
+                                    <input
+                                        type="date"
+                                        className="bg-transparent border-none text-white text-xs focus:ring-0 w-[110px] h-6"
+                                        value={filterDateRange?.to ? format(filterDateRange.to, 'yyyy-MM-dd') : ''}
+                                        onChange={(e) => setFilterDateRange(prev => ({ from: prev?.from, to: e.target.value ? new Date(e.target.value) : undefined }))}
+                                    />
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
+
+                        {/* Row 2: Location Filters */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                             {/* Box Filter */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filters.boxId || "all"}
                                     onValueChange={(val) => setFilters(prev => ({ ...prev, boxId: val === "all" ? "" : val, cabinetId: "", shelfId: "", folderId: "" }))}
                                 >
-                                    <SelectTrigger className="w-[180px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="All Boxes" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -866,13 +958,13 @@ const ProcurementList: React.FC = () => {
                             </div>
 
                             {/* Cabinet Filter */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filters.cabinetId || "all"}
                                     onValueChange={(val) => setFilters(prev => ({ ...prev, cabinetId: val === "all" ? "" : val, shelfId: "", folderId: "", boxId: "" }))} // Clear box if shelf selected
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
-                                        <SelectValue placeholder="Shelf" />
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
+                                        <SelectValue placeholder="All Shelves" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                         <SelectItem value="all">All Shelves</SelectItem>
@@ -883,7 +975,7 @@ const ProcurementList: React.FC = () => {
                                 </Select>
                             </div>
 
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filters.shelfId}
                                     onValueChange={(value) => setFilters({
@@ -893,7 +985,7 @@ const ProcurementList: React.FC = () => {
                                     })}
                                     disabled={!filters.cabinetId}
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="Cabinet" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -905,13 +997,13 @@ const ProcurementList: React.FC = () => {
                                 </Select>
                             </div>
 
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filters.folderId}
                                     onValueChange={(value) => setFilters({ ...filters, folderId: value })}
                                     disabled={!filters.shelfId}
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="Folder" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -922,25 +1014,29 @@ const ProcurementList: React.FC = () => {
                                     </SelectContent>
                                 </Select>
                             </div>
+                        </div>
 
+                        {/* Row 3: Properties & Sort */}
+                        <div className="flex flex-wrap gap-2 items-center">
                             {/* STATUS multi-select dropdown */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="flex-1 min-w-[120px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                        <Button variant="ghost" className="flex items-center gap-2 text-white px-3 py-1">
-                                            <span>Status</span>
-                                            {statusFilters.length > 0 && (
-                                                <span className="inline-flex items-center justify-center h-6 min-w-[24px] px-2 rounded-full bg-emerald-600 text-white text-xs font-medium">
-                                                    {statusFilters.length}
-                                                </span>
-                                            )}
+                                        <Button variant="ghost" className="w-full flex justify-between items-center text-white px-3 py-1 h-6 text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <span>Status</span>
+                                                {statusFilters.length > 0 && (
+                                                    <span className="inline-flex items-center justify-center h-5 px-1.5 rounded-full bg-emerald-600 text-white text-[10px] font-medium">
+                                                        {statusFilters.length}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <ChevronDown className="h-4 w-4 opacity-50" />
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="start" className="bg-[#1e293b] border-slate-700 text-white p-3 w-56">
                                         <div className="mb-2 text-slate-300 text-sm">Select status</div>
                                         <div className="flex flex-col gap-2 max-h-48 overflow-auto">
-
-
                                             {statusOptions.map((status) => (
                                                 <div key={status} className="flex items-center gap-2">
                                                     <Checkbox
@@ -962,13 +1058,53 @@ const ProcurementList: React.FC = () => {
                                 </DropdownMenu>
                             </div>
 
+                            {/* PROGRESS STATUS multi-select dropdown */}
+                            <div className="flex-1 min-w-[120px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" className="w-full flex justify-between items-center text-white px-3 py-1 h-6 text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <span>Progress</span>
+                                                {progressStatusFilters.length > 0 && (
+                                                    <span className="inline-flex items-center justify-center h-5 px-1.5 rounded-full bg-blue-600 text-white text-[10px] font-medium">
+                                                        {progressStatusFilters.length}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <ChevronDown className="h-4 w-4 opacity-50" />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="bg-[#1e293b] border-slate-700 text-white p-3 w-56">
+                                        <div className="mb-2 text-slate-300 text-sm">Select progress</div>
+                                        <div className="flex flex-col gap-2 max-h-48 overflow-auto">
+                                            {progressStatusOptions.map((status) => (
+                                                <div key={status} className="flex items-center gap-2">
+                                                    <Checkbox
+                                                        checked={progressStatusFilters.includes(status)}
+                                                        onCheckedChange={() => toggleProgressStatusFilter(status)}
+                                                        className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleProgressStatusFilter(status)}
+                                                        className="text-sm text-slate-200 text-left w-full"
+                                                    >
+                                                        {status}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+
                             {/* Division Filter */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="flex-1 min-w-[150px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filterDivision}
                                     onValueChange={setFilterDivision}
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="All Divisions" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -981,48 +1117,29 @@ const ProcurementList: React.FC = () => {
                             </div>
 
                             {/* Type Filter */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="flex-1 min-w-[120px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
                                     value={filterType}
                                     onValueChange={setFilterType}
                                 >
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-full border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="All Types" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                         <SelectItem value="all_types">All Types</SelectItem>
                                         <SelectItem value="Regular Bidding">Regular Bidding</SelectItem>
-                                        <SelectItem value="SVP">SVP</SelectItem>
+                                        <SelectItem value="Small Value Procurement(SVP)">Small Value Procurement(SVP)</SelectItem>
+                                        <SelectItem value="Attendance Sheets">Attendance Sheets</SelectItem>
+                                        <SelectItem value="Receipt">Receipt</SelectItem>
+                                        <SelectItem value="Others">Others</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
 
-                            {/* Date Range Filter (Typable) */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
-                                <div className="flex items-center gap-1 px-2">
-                                    <span className="text-xs text-slate-400">From:</span>
-                                    <input
-                                        type="date"
-                                        className="bg-transparent border-none text-white text-xs focus:ring-0 w-[110px]"
-                                        value={filterDateRange?.from ? format(filterDateRange.from, 'yyyy-MM-dd') : ''}
-                                        onChange={(e) => setFilterDateRange(prev => ({ from: e.target.value ? new Date(e.target.value) : undefined, to: prev?.to }))}
-                                    />
-                                </div>
-                                <div className="flex items-center gap-1 px-2 border-l border-slate-700">
-                                    <span className="text-xs text-slate-400">To:</span>
-                                    <input
-                                        type="date"
-                                        className="bg-transparent border-none text-white text-xs focus:ring-0 w-[110px]"
-                                        value={filterDateRange?.to ? format(filterDateRange.to, 'yyyy-MM-dd') : ''}
-                                        onChange={(e) => setFilterDateRange(prev => ({ from: prev?.from, to: e.target.value ? new Date(e.target.value) : undefined }))}
-                                    />
-                                </div>
-                            </div>
-
                             {/* SORT controls */}
-                            <div className="flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                            <div className="flex-none flex items-center gap-2 bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select value={sortField} onValueChange={(value) => setSortField(value as 'name' | 'prNumber' | 'date' | 'stackNumber')}>
-                                    <SelectTrigger className="w-[150px] border-none bg-transparent text-white focus:ring-0">
+                                    <SelectTrigger className="w-[120px] border-none bg-transparent text-white focus:ring-0 h-6 text-xs">
                                         <SelectValue placeholder="Sort by" />
                                     </SelectTrigger>
                                     <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
@@ -1036,7 +1153,7 @@ const ProcurementList: React.FC = () => {
                                     variant="ghost"
                                     size="icon"
                                     onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
-                                    className="h-8 w-8 text-slate-400 hover:text-white"
+                                    className="h-6 w-8 text-slate-400 hover:text-white"
                                     title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}
                                 >
                                     {sortDirection === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
@@ -1047,7 +1164,7 @@ const ProcurementList: React.FC = () => {
                                 variant="outline"
                                 size="icon"
                                 onClick={clearFilters}
-                                className="bg-[#1e293b] border-slate-700 text-slate-400 hover:text-white"
+                                className="bg-[#1e293b] border-slate-700 text-slate-400 hover:text-white ml-auto h-8 w-8"
                                 title="Clear Filters"
                             >
                                 <FilterX className="h-4 w-4" />
@@ -1057,7 +1174,7 @@ const ProcurementList: React.FC = () => {
                 </CardHeader>
                 <CardContent>
                     <div className="rounded-md border border-slate-800 overflow-x-auto">
-                        <Table>
+                        <Table className="text-xs">
                             <TableHeader>
                                 <TableRow className="border-slate-800 hover:bg-transparent">
                                     <TableHead className="w-[50px]">
@@ -1067,12 +1184,12 @@ const ProcurementList: React.FC = () => {
                                             className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                                         />
                                     </TableHead>
-                                    <TableHead className="text-slate-300">PR Number</TableHead>
+                                    <TableHead className="text-slate-300 w-[150px]">PR Number</TableHead>
                                     <TableHead className="text-slate-300">Project Title</TableHead>
                                     <TableHead className="text-slate-300">Division</TableHead>
                                     <TableHead className="text-slate-300">Type</TableHead>
-                                    <TableHead className="text-slate-300">Location</TableHead>
-                                    <TableHead className="text-center text-slate-300">Stack</TableHead>
+                                    <TableHead className="text-slate-300 w-[130px]">Location</TableHead>
+                                    <TableHead className="text-center text-slate-300 w-[80px]">Stack #</TableHead>
                                     <TableHead className="text-slate-300">Storage Unit</TableHead>
                                     <TableHead className="text-slate-300">Progress</TableHead>
                                     <TableHead className="text-slate-300">Status</TableHead>
@@ -1098,12 +1215,12 @@ const ProcurementList: React.FC = () => {
                                                 />
                                             </TableCell>
                                             <TableCell className="font-medium text-white">
-                                                {procurement.prNumber}
+                                                {procurement.procurementType === 'Attendance Sheets' ? 'N/A' : procurement.prNumber}
                                             </TableCell>
-                                            <TableCell className="max-w-[200px] truncate text-slate-400">
+                                            <TableCell className="max-w-[150px] truncate text-slate-400" title={procurement.projectName || ''}>
                                                 {procurement.projectName || '-'}
                                             </TableCell>
-                                            <TableCell className="text-slate-300">
+                                            <TableCell className="max-w-[150px] truncate text-slate-300" title={procurement.division || ''}>
                                                 {procurement.division || '-'}
                                             </TableCell>
                                             <TableCell className="text-slate-300">
@@ -1111,12 +1228,14 @@ const ProcurementList: React.FC = () => {
                                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
                                                         Regular Bidding
                                                     </span>
-                                                ) : procurement.procurementType === 'SVP' ? (
+                                                ) : procurement.procurementType === 'Small Value Procurement(SVP)' ? (
                                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                                                        SVP
+                                                        Small Value Procurement(SVP)
                                                     </span>
                                                 ) : (
-                                                    '-'
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                                                        {procurement.procurementType || '-'}
+                                                    </span>
                                                 )}
                                             </TableCell>
                                             <TableCell>
@@ -1129,9 +1248,7 @@ const ProcurementList: React.FC = () => {
                                             </TableCell>
                                             <TableCell className="text-center">
                                                 <span className="text-slate-400 text-sm font-mono">
-                                                    {procurement.status === 'archived' && procurement.stackNumber
-                                                        ? `↕${procurement.stackNumber}`
-                                                        : '-'}
+                                                    {procurement.stackNumber ? `↕${procurement.stackNumber}` : '-'}
                                                 </span>
                                             </TableCell>
                                             <TableCell>
@@ -1157,37 +1274,57 @@ const ProcurementList: React.FC = () => {
                                                 )}
                                             </TableCell>
                                             <TableCell>
-                                                <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${procurement.progressStatus === 'Success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                                                    procurement.progressStatus === 'Failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                                                        'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
-                                                    }`}>
-                                                    {procurement.progressStatus || 'Pending'}
-                                                </div>
+                                                {procurement.procurementType === 'Attendance Sheets' ? (
+                                                    <span className="text-slate-500">N/A</span>
+                                                ) : (
+                                                    <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${procurement.progressStatus === 'Success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                                        procurement.progressStatus === 'Failed' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+                                                            procurement.progressStatus === 'Cancelled' ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20' :
+                                                                'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
+                                                        }`}>
+                                                        {procurement.progressStatus || 'Pending'}
+                                                    </div>
+                                                )}
                                             </TableCell>
                                             <TableCell>
-                                                <Select
-                                                    value={procurement.status}
-                                                    onValueChange={(value) => handleStatusChange(procurement, value as ProcurementStatus)}
-                                                >
-                                                    <SelectTrigger className={`w-[130px] border ${procurement.status === 'active'
-                                                        ? 'bg-orange-500/10 text-orange-400 border-orange-500/20'
-                                                        : 'bg-slate-700/50 text-slate-300 border-slate-700'
-                                                        }`}>
-                                                        <SelectValue>
-                                                            {procurement.status === 'active' ? 'Borrowed' : 'Archived'}
-                                                        </SelectValue>
-                                                    </SelectTrigger>
-                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                        <SelectItem value="active" className="text-orange-400 focus:text-orange-400">Borrowed</SelectItem>
-                                                        <SelectItem value="archived" className="text-slate-300 focus:text-white">Archived</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
+                                                {procurement.procurementType === 'Attendance Sheets' ? (
+                                                    <span className="text-slate-500">N/A</span>
+                                                ) : (
+                                                    <Select
+                                                        value={procurement.status}
+                                                        onValueChange={(value) => handleStatusChange(procurement, value as ProcurementStatus)}
+                                                    >
+                                                        <SelectTrigger className={`w-[130px] border ${procurement.status === 'active'
+                                                            ? 'bg-orange-500/10 text-orange-400 border-orange-500/20'
+                                                            : 'bg-slate-700/50 text-slate-300 border-slate-700'
+                                                            }`}>
+                                                            <SelectValue>
+                                                                {procurement.status === 'active' ? 'Borrowed' : 'Archived'}
+                                                            </SelectValue>
+                                                        </SelectTrigger>
+                                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                            <SelectItem value="active" className="text-orange-400 focus:text-orange-400">Borrowed</SelectItem>
+                                                            <SelectItem value="archived" className="text-slate-300 focus:text-white">Archived</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                )}
                                             </TableCell>
                                             <TableCell className="text-slate-400">
                                                 {procurement.procurementDate ? format(new Date(procurement.procurementDate), 'MMM d, yyyy') : '-'}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex justify-end gap-2">
+                                                    {isFolderView && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => handleRelocateClick(procurement)}
+                                                            className="h-8 w-8 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+                                                            title="Relocate / Reorder"
+                                                        >
+                                                            <ArrowUp className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
@@ -1265,10 +1402,10 @@ const ProcurementList: React.FC = () => {
                 )}
             </Card>
 
-            {/* Edit Dialog */}
+            {/* Edit Dialog - Fixed Layout */}
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-                <DialogContent className="border-slate-800 bg-[#0f172a] text-white max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
+                <DialogContent className="border-slate-800 bg-[#0f172a] text-white max-w-2xl max-h-[90vh] flex flex-col p-0">
+                    <DialogHeader className="p-6 pb-2">
                         <DialogTitle>Edit Record</DialogTitle>
                         <DialogDescription className="text-slate-400">
                             Update the procurement details and location.
@@ -1276,383 +1413,408 @@ const ProcurementList: React.FC = () => {
                     </DialogHeader>
 
                     {editingProcurement && (
-                        <div className="grid gap-6 py-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2 col-span-2">
-                                    <Label className="text-slate-300">PR Number Construction</Label>
-                                    <div className="grid grid-cols-4 gap-2 items-end p-3 rounded-lg bg-[#1e293b]/50 border border-slate-700/50">
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-slate-400">Division</Label>
-                                            <Select value={editDivisionId} onValueChange={setEditDivisionId}>
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
-                                                    <SelectValue placeholder="Div" />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                    {divisions.map(div => (
-                                                        <SelectItem key={div.id} value={div.id}>{div.abbreviation}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-slate-400">Month</Label>
-                                            <Select value={editPrMonth} onValueChange={setEditPrMonth}>
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
-                                                    {MONTHS.map(m => (
-                                                        <SelectItem key={m.value} value={m.value}>{m.value}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-slate-400">Year</Label>
-                                            <Input
-                                                value={editPrYear}
-                                                onChange={(e) => setEditPrYear(e.target.value)}
-                                                className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
-                                                maxLength={2}
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-slate-400">Seq</Label>
-                                            <Input
-                                                value={editPrSequence}
-                                                onChange={(e) => setEditPrSequence(e.target.value)}
-                                                className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
-                                                maxLength={3}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="mt-1 text-xs text-slate-500 text-right">
-                                        Current: <span className="font-mono text-emerald-500">{editingProcurement.prNumber}</span>
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Date Added</Label>
-                                    <Input
-                                        value={format(new Date(editingProcurement.dateAdded), 'yyyy-MM-dd')}
-                                        disabled
-                                        className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label className="text-slate-300">Project Title (Description)</Label>
-                                <Textarea
-                                    value={editingProcurement.description}
-                                    onChange={(e) => setEditingProcurement({ ...editingProcurement, description: e.target.value })}
-                                    className="bg-[#1e293b] border-slate-700 text-white"
-                                    rows={3}
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Procurement Type</Label>
-                                    <Select
-                                        value={editingProcurement.procurementType || 'Regular Bidding'}
-                                        onValueChange={(value) => setEditingProcurement({ ...editingProcurement, procurementType: value })}
-                                    >
-                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="Regular Bidding">Regular Bidding</SelectItem>
-                                            <SelectItem value="Small Value Procurement">Small Value Procurement</SelectItem>
-                                            <SelectItem value="Shopping">Shopping</SelectItem>
-                                            <SelectItem value="Direct Contracting">Direct Contracting</SelectItem>
-                                            <SelectItem value="Negotiated Procurement">Negotiated Procurement</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Progress Status</Label>
-                                    <Select
-                                        value={editingProcurement.progressStatus || 'Pending'}
-                                        onValueChange={(value) => setEditingProcurement({ ...editingProcurement, progressStatus: value as 'Pending' | 'Success' | 'Failed' })}
-                                    >
-                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="Pending" className="text-yellow-400">Pending</SelectItem>
-                                            <SelectItem value="Success" className="text-emerald-400">Success</SelectItem>
-                                            <SelectItem value="Failed" className="text-red-400">Failed</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            </div>
-
-                            {/* Checklist (Conditional) */}
-                            {(editingProcurement.procurementType === 'Regular Bidding' || !editingProcurement.procurementType) && (
-                                <div className="bg-[#0f172a] p-4 rounded-lg border border-slate-800 space-y-4">
-                                    <div className="flex justify-between items-center mb-1">
-                                        <div>
-                                            <h3 className="text-sm font-semibold text-white">Attached Documents</h3>
-                                            <p className="text-xs text-slate-400">Checklist for Regular Bidding</p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            {/* Replace the Check All button */}
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
-                                                onClick={() => {
-                                                    // Create a new checklist object with all items checked
-                                                    const allChecked = {
-                                                        noticeToProceed: true,
-                                                        contractOfAgreement: true,
-                                                        noticeOfAward: true,
-                                                        bacResolutionAward: true,
-                                                        postQualReport: true,
-                                                        noticePostQual: true,
-                                                        bacResolutionPostQual: true,
-                                                        abstractBidsEvaluated: true,
-                                                        twgBidEvalReport: true,
-                                                        minutesBidOpening: true,
-                                                        resultEligibilityCheck: true,
-                                                        biddersTechFinancialProposals: true,
-                                                        minutesPreBid: true,
-                                                        biddingDocuments: true,
-                                                        inviteObservers: true,
-                                                        officialReceipt: true,
-                                                        boardResolution: true,
-                                                        philgepsAwardNotice: true,
-                                                        philgepsPosting: true,
-                                                        websitePosting: true,
-                                                        postingCertificate: true,
-                                                        fundsAvailability: true
-                                                    };
-                                                    
-                                                    setEditingProcurement(prev => ({
-                                                        ...prev!,
-                                                        checklist: allChecked
-                                                    }));
-                                                }}
-                                            >
-                                                Check All
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
-                                                onClick={() => {
-                                                    // Create a new checklist object with all items unchecked
-                                                    const allUnchecked = {
-                                                        noticeToProceed: false,
-                                                        contractOfAgreement: false,
-                                                        noticeOfAward: false,
-                                                        bacResolutionAward: false,
-                                                        postQualReport: false,
-                                                        noticePostQual: false,
-                                                        bacResolutionPostQual: false,
-                                                        abstractBidsEvaluated: false,
-                                                        twgBidEvalReport: false,
-                                                        minutesBidOpening: false,
-                                                        resultEligibilityCheck: false,
-                                                        biddersTechFinancialProposals: false,
-                                                        minutesPreBid: false,
-                                                        biddingDocuments: false,
-                                                        inviteObservers: false,
-                                                        officialReceipt: false,
-                                                        boardResolution: false,
-                                                        philgepsAwardNotice: false,
-                                                        philgepsPosting: false,
-                                                        websitePosting: false,
-                                                        postingCertificate: false,
-                                                        fundsAvailability: false
-                                                    };
-                                                    
-                                                    setEditingProcurement(prev => ({
-                                                        ...prev!,
-                                                        checklist: allUnchecked
-                                                    }));
-                                                }}
-                                            >
-                                                Clear All
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 text-xs max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                                        {checklistItems.map((item) => (
-                                            <div key={item.key} className="flex items-center space-x-2 p-1 rounded hover:bg-slate-800/50">
-                                                <Checkbox
-                                                    id={`edit-${item.key}`}
-                                                    checked={editingProcurement.checklist?.[item.key as keyof typeof editingProcurement.checklist] || false}
-                                                    onCheckedChange={(checked) => setEditingProcurement({
-                                                        ...editingProcurement,
-                                                        checklist: {
-                                                            ...editingProcurement.checklist,
-                                                            [item.key]: checked
-                                                        } as any
-                                                    })}
-                                                    className="h-3 w-3 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-                                                />
-                                                <Label
-                                                    htmlFor={`edit-${item.key}`}
-                                                    className="text-[10px] leading-none text-slate-300 cursor-pointer"
-                                                >
-                                                    {item.label}
-                                                </Label>
+                        <div className="flex-1 overflow-y-auto p-6 pt-2">
+                            <div className="grid gap-6">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2 col-span-2">
+                                        <Label className="text-slate-300">PR Number Construction</Label>
+                                        <div className="grid grid-cols-4 gap-2 items-end p-3 rounded-lg bg-[#1e293b]/50 border border-slate-700/50">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-slate-400">Division</Label>
+                                                <Select value={editDivisionId} onValueChange={setEditDivisionId}>
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
+                                                        <SelectValue placeholder="Div" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                        {divisions.map(div => (
+                                                            <SelectItem key={div.id} value={div.id}>{div.abbreviation}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
-                                        ))}
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-slate-400">Month</Label>
+                                                <Select value={editPrMonth} onValueChange={setEditPrMonth}>
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
+                                                        {MONTHS.map(m => (
+                                                            <SelectItem key={m.value} value={m.value}>{m.value}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-slate-400">Year</Label>
+                                                <Input
+                                                    value={editPrYear}
+                                                    onChange={(e) => setEditPrYear(e.target.value)}
+                                                    className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
+                                                    maxLength={2}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-slate-400">Seq</Label>
+                                                <Input
+                                                    value={editPrSequence}
+                                                    onChange={(e) => setEditPrSequence(e.target.value)}
+                                                    className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
+                                                    maxLength={3}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500 text-right">
+                                            Current: <span className="font-mono text-emerald-500">{editingProcurement.prNumber}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-
-                            {/* <div className="space-y-2">
-                                <Label className="text-slate-300">Status</Label>
-                                <Select
-                                    value={editingProcurement.status}
-                                    onValueChange={(value) => setEditingProcurement({ ...editingProcurement, status: value as ProcurementStatus })}
-                                >
-                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                        <SelectItem value="active">Borrowed</SelectItem>
-                                        <SelectItem value="archived">Archived</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div> */}
-
-                            {editingProcurement.status === 'active' && (
-                                <div className="grid grid-cols-2 gap-4 bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
                                     <div className="space-y-2">
-                                        <Label className="text-orange-300">Borrower Name</Label>
+                                        <Label className="text-slate-300">Project Name</Label>
                                         <Input
-                                            value={editingProcurement.borrowerName || ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, borrowerName: e.target.value })}
-                                            className="bg-[#1e293b] border-orange-500/30 text-white focus:border-orange-500"
-                                            placeholder="Enter borrower name"
+                                            value={editingProcurement.projectName || ''}
+                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, projectName: e.target.value })}
+                                            className="bg-[#1e293b] border-slate-700 text-white"
                                         />
                                     </div>
+
                                     <div className="space-y-2">
-                                        <Label className="text-orange-300">Return Date</Label>
+                                        <Label className="text-slate-300">Procurement Date</Label>
                                         <Input
                                             type="date"
-                                            value={editingProcurement.returnDate ? format(new Date(editingProcurement.returnDate), 'yyyy-MM-dd') : ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, returnDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                            className="bg-[#1e293b] border-orange-500/30 text-white focus:border-orange-500"
+                                            value={editingProcurement.procurementDate ? format(new Date(editingProcurement.procurementDate), 'yyyy-MM-dd') : ''}
+                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, procurementDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
+                                            className="bg-[#1e293b] border-slate-700 text-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Date Added</Label>
+                                        <Input
+                                            value={format(new Date(editingProcurement.dateAdded), 'yyyy-MM-dd')}
+                                            disabled
+                                            className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Division</Label>
+                                        <Input
+                                            value={editingProcurement.division || ''}
+                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, division: e.target.value })}
+                                            className="bg-[#1e293b] border-slate-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                            placeholder="Enter division"
+                                            disabled={editingProcurement.status === 'archived'}
                                         />
                                     </div>
                                 </div>
-                            )}
 
-                            <div className="space-y-2 border-t border-slate-800 pt-4">
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Project Description</Label>
+                                    <Textarea
+                                        value={editingProcurement.description}
+                                        onChange={(e) => setEditingProcurement({ ...editingProcurement, description: e.target.value })}
+                                        className="bg-[#1e293b] border-slate-700 text-white"
+                                        rows={3}
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Procurement Type</Label>
+                                        <Select
+                                            value={editingProcurement.procurementType || 'Regular Bidding'}
+                                            onValueChange={(value) => setEditingProcurement({ ...editingProcurement, procurementType: value })}
+                                        >
+                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectItem value="Regular Bidding">Regular Bidding</SelectItem>
+                                                <SelectItem value="Small Value Procurement">Small Value Procurement (SVP)</SelectItem>
+                                                <SelectItem value="Shopping">Shopping</SelectItem>
+                                                <SelectItem value="Direct Contracting">Direct Contracting</SelectItem>
+                                                <SelectItem value="Negotiated Procurement">Negotiated Procurement</SelectItem>
+                                                <SelectItem value="Attendance Sheet">Attendance Sheet</SelectItem>
+                                                <SelectItem value="Official Receipt">Official Receipt</SelectItem>
+                                                <SelectItem value="Others">Others</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Progress Status</Label>
+                                        <Select
+                                            value={editingProcurement.progressStatus || 'Pending'}
+                                            onValueChange={(value) => setEditingProcurement({ ...editingProcurement, progressStatus: value as 'Pending' | 'Success' | 'Failed' })}
+                                        >
+                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectItem value="Pending" className="text-yellow-400">Pending</SelectItem>
+                                                <SelectItem value="Success" className="text-emerald-400">Success</SelectItem>
+                                                <SelectItem value="Failed" className="text-red-400">Failed</SelectItem>
+                                                <SelectItem value="Cancelled" className="text-slate-400">Cancelled</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div >
+                            </div>
+
+                            {/* Checklist (Always shown for reference, or user can ignore) */}
+                            < div className="bg-[#0f172a] p-4 rounded-lg border border-slate-800 space-y-4" >
+                                <div className="flex justify-between items-center mb-1">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-white">Attached Documents</h3>
+                                        <p className="text-xs text-slate-400">Combined Checklist</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {/* Replace the Check All button */}
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
+                                            onClick={() => {
+                                                // Create a new checklist object with all items checked
+                                                const allChecked = {
+                                                    noticeToProceed: true,
+                                                    contractOfAgreement: true,
+                                                    noticeOfAward: true,
+                                                    bacResolutionAward: true,
+                                                    postQualReport: true,
+                                                    noticePostQual: true,
+                                                    bacResolutionPostQual: true,
+                                                    abstractBidsEvaluated: true,
+                                                    twgBidEvalReport: true,
+                                                    minutesBidOpening: true,
+                                                    resultEligibilityCheck: true,
+                                                    biddersTechFinancialProposals: true,
+                                                    minutesPreBid: true,
+                                                    biddingDocuments: true,
+                                                    inviteObservers: true,
+                                                    officialReceipt: true,
+                                                    boardResolution: true,
+                                                    philgepsAwardNotice: true,
+                                                    philgepsPosting: true,
+                                                    websitePosting: true,
+                                                    postingCertificate: true,
+                                                    fundsAvailability: true
+                                                };
+
+                                                setEditingProcurement(prev => ({
+                                                    ...prev!,
+                                                    checklist: allChecked
+                                                }));
+                                            }}
+                                        >
+                                            Check All
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white"
+                                            onClick={() => {
+                                                // Create a new checklist object with all items unchecked
+                                                const allUnchecked = {
+                                                    noticeToProceed: false,
+                                                    contractOfAgreement: false,
+                                                    noticeOfAward: false,
+                                                    bacResolutionAward: false,
+                                                    postQualReport: false,
+                                                    noticePostQual: false,
+                                                    bacResolutionPostQual: false,
+                                                    abstractBidsEvaluated: false,
+                                                    twgBidEvalReport: false,
+                                                    minutesBidOpening: false,
+                                                    resultEligibilityCheck: false,
+                                                    biddersTechFinancialProposals: false,
+                                                    minutesPreBid: false,
+                                                    biddingDocuments: false,
+                                                    inviteObservers: false,
+                                                    officialReceipt: false,
+                                                    boardResolution: false,
+                                                    philgepsAwardNotice: false,
+                                                    philgepsPosting: false,
+                                                    websitePosting: false,
+                                                    postingCertificate: false,
+                                                    fundsAvailability: false
+                                                };
+
+                                                setEditingProcurement(prev => ({
+                                                    ...prev!,
+                                                    checklist: allUnchecked
+                                                }));
+                                            }}
+                                        >
+                                            Clear All
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 text-xs max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                                    {checklistItems.map((item) => (
+                                        <div key={item.key} className="flex items-center space-x-2 p-1 rounded hover:bg-slate-800/50">
+                                            <Checkbox
+                                                id={`edit-${item.key}`}
+                                                checked={editingProcurement.checklist?.[item.key as keyof typeof editingProcurement.checklist] || false}
+                                                onCheckedChange={(checked) => setEditingProcurement({
+                                                    ...editingProcurement,
+                                                    checklist: {
+                                                        ...editingProcurement.checklist,
+                                                        [item.key]: checked
+                                                    } as any
+                                                })}
+                                                className="h-3 w-3 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                            />
+                                            <Label
+                                                htmlFor={`edit-${item.key}`}
+                                                className="text-[10px] leading-none text-slate-300 cursor-pointer"
+                                            >
+                                                {item.label}
+                                            </Label>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div >
+
+
+                            {
+                                editingProcurement.status === 'active' && (
+                                    <div className="grid grid-cols-2 gap-4 bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
+                                        <div className="space-y-2">
+                                            <Label className="text-orange-300">Borrower Name</Label>
+                                            <Input
+                                                value={editingProcurement.borrowerName || ''}
+                                                onChange={(e) => setEditingProcurement({ ...editingProcurement, borrowerName: e.target.value })}
+                                                className="bg-[#1e293b] border-orange-500/30 text-white focus:border-orange-500"
+                                                placeholder="Enter borrower name"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-orange-300">Return Date</Label>
+                                            <Input
+                                                type="date"
+                                                value={editingProcurement.returnDate ? format(new Date(editingProcurement.returnDate), 'yyyy-MM-dd') : ''}
+                                                onChange={(e) => setEditingProcurement({ ...editingProcurement, returnDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
+                                                className="bg-[#1e293b] border-orange-500/30 text-white focus:border-orange-500"
+                                            />
+                                        </div>
+                                    </div>
+                                )
+                            }
+
+                            < div className="space-y-2 border-t border-slate-800 pt-4" >
                                 <div className="flex items-center justify-between mb-2">
                                     <Label className="text-lg font-semibold text-white">Location</Label>
                                     <div className="flex bg-[#1e293b] p-1 rounded-lg border border-slate-700">
                                         <button
                                             type="button"
-                                            onClick={() => setEditingProcurement({ ...editingProcurement, boxId: undefined })}
+                                            onClick={() => setEditingProcurement({ ...editingProcurement, boxId: null })}
                                             className={`px-3 py-1 rounded text-xs font-medium transition-all ${!editingProcurement.boxId ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                                         >
                                             Shelf
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => setEditingProcurement({ ...editingProcurement, boxId: '', shelfId: '', cabinetId: '', folderId: '' })} // Set boxId to managed empty string or keep logic
-                                            className={`px-3 py-1 rounded text-xs font-medium transition-all ${editingProcurement.boxId !== undefined ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                            onClick={() => setEditingProcurement({ ...editingProcurement, boxId: '', shelfId: null, cabinetId: null, folderId: null })} // Set boxId to managed empty string (to show dropdown) but clear others
+                                            className={`px-3 py-1 rounded text-xs font-medium transition-all ${editingProcurement.boxId !== undefined && editingProcurement.boxId !== null ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                                         >
                                             Box
                                         </button>
                                     </div>
                                 </div>
 
-                                {!editingProcurement.boxId && editingProcurement.boxId !== '' ? (
-                                    <div className="grid grid-cols-3 gap-4 animate-in fade-in">
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Shelf</Label>
-                                            <Select
-                                                value={editingProcurement.cabinetId}
-                                                onValueChange={(val) => setEditingProcurement({
-                                                    ...editingProcurement,
-                                                    cabinetId: val,
-                                                    shelfId: '',
-                                                    folderId: ''
-                                                })}
-                                            >
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                    {cabinets.map((c) => (
-                                                        <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                {
+                                    !editingProcurement.boxId && editingProcurement.boxId !== '' ? (
+                                        <div className="grid grid-cols-3 gap-4 animate-in fade-in">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Shelf</Label>
+                                                <Select
+                                                    value={editingProcurement.cabinetId}
+                                                    onValueChange={(val) => setEditingProcurement({
+                                                        ...editingProcurement,
+                                                        cabinetId: val,
+                                                        cabinetId: val,
+                                                        shelfId: null,
+                                                        folderId: null
+                                                    })}
+                                                >
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                        {cabinets.map((c) => (
+                                                            <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Cabinet</Label>
+                                                <Select
+                                                    value={editingProcurement.shelfId}
+                                                    onValueChange={(val) => setEditingProcurement({
+                                                        ...editingProcurement,
+                                                        shelfId: val,
+                                                        shelfId: val,
+                                                        folderId: null
+                                                    })}
+                                                    disabled={!editingProcurement.cabinetId}
+                                                >
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                        {editAvailableShelves.map((s) => (
+                                                            <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Folder</Label>
+                                                <Select
+                                                    value={editingProcurement.folderId}
+                                                    onValueChange={(val) => setEditingProcurement({ ...editingProcurement, folderId: val })}
+                                                    disabled={!editingProcurement.shelfId}
+                                                >
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                        {editAvailableFolders.map((f) => (
+                                                            <SelectItem key={f.id} value={f.id}>{f.code} - {f.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Cabinet</Label>
-                                            <Select
-                                                value={editingProcurement.shelfId}
-                                                onValueChange={(val) => setEditingProcurement({
-                                                    ...editingProcurement,
-                                                    shelfId: val,
-                                                    folderId: ''
-                                                })}
-                                                disabled={!editingProcurement.cabinetId}
-                                            >
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                    {editAvailableShelves.map((s) => (
-                                                        <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                    ) : (
+                                        <div className="animate-in fade-in">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Box</Label>
+                                                <Select
+                                                    value={editingProcurement.boxId || ''}
+                                                    onValueChange={(val) => setEditingProcurement({
+                                                        ...editingProcurement,
+                                                        boxId: val,
+                                                        boxId: val,
+                                                        shelfId: null, cabinetId: null, folderId: null // Clear others
+                                                    })}
+                                                >
+                                                    <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                        <SelectValue placeholder="Select Box" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                        {boxes.map((b) => (
+                                                            <SelectItem key={b.id} value={b.id}>{b.code} - {b.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Folder</Label>
-                                            <Select
-                                                value={editingProcurement.folderId}
-                                                onValueChange={(val) => setEditingProcurement({ ...editingProcurement, folderId: val })}
-                                                disabled={!editingProcurement.shelfId}
-                                            >
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                    {editAvailableFolders.map((f) => (
-                                                        <SelectItem key={f.id} value={f.id}>{f.code} - {f.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="animate-in fade-in">
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Box</Label>
-                                            <Select
-                                                value={editingProcurement.boxId || ''}
-                                                onValueChange={(val) => setEditingProcurement({
-                                                    ...editingProcurement,
-                                                    boxId: val,
-                                                    shelfId: '', cabinetId: '', folderId: '' // Clear others
-                                                })}
-                                            >
-                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                    <SelectValue placeholder="Select Box" />
-                                                </SelectTrigger>
-                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                    {boxes.map((b) => (
-                                                        <SelectItem key={b.id} value={b.id}>{b.code} - {b.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                                    )
+                                }
+                            </div >
 
                             <div className="border-t border-slate-800 pt-4">
                                 <div className="space-y-2">
@@ -1689,42 +1851,20 @@ const ProcurementList: React.FC = () => {
                                     </div>
                                     <div className="space-y-2">
                                         <Label className="text-slate-300">Borrower Division</Label>
-                                        <Input
+                                        <Select
                                             value={editingProcurement.borrowerDivision || ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, borrowerDivision: e.target.value })}
-                                            className="bg-[#1e293b] border-slate-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                                            placeholder="Enter borrower division"
+                                            onValueChange={(val) => setEditingProcurement({ ...editingProcurement, borrowerDivision: val })}
                                             disabled={editingProcurement.status === 'archived'}
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label className="text-slate-300">Project Name</Label>
-                                        <Input
-                                            value={editingProcurement.projectName || ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, projectName: e.target.value })}
-                                            className="bg-[#1e293b] border-slate-700 text-white"
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label className="text-slate-300">Procurement Date</Label>
-                                        <Input
-                                            type="date"
-                                            value={editingProcurement.procurementDate ? format(new Date(editingProcurement.procurementDate), 'yyyy-MM-dd') : ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, procurementDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                            className="bg-[#1e293b] border-slate-700 text-white"
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label className="text-slate-300">Division</Label>
-                                        <Input
-                                            value={editingProcurement.division || ''}
-                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, division: e.target.value })}
-                                            className="bg-[#1e293b] border-slate-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                                            placeholder="Enter division"
-                                            disabled={editingProcurement.status === 'archived'}
-                                        />
+                                        >
+                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectValue placeholder="Select Division" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white h-[200px]">
+                                                {divisions.sort((a, b) => a.name.localeCompare(b.name)).map((d) => (
+                                                    <SelectItem key={d.id} value={d.name}>{d.name} ({d.abbreviation})</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
                                     </div>
                                 </div>
 
@@ -1748,10 +1888,23 @@ const ProcurementList: React.FC = () => {
                                         />
                                     </div>
                                 </div>
+
+                                {editingProcurement.status === 'archived' && (
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Returned By</Label>
+                                        <Input
+                                            value={editingProcurement.returnedBy || ''}
+                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, returnedBy: e.target.value })}
+                                            className="bg-[#1e293b] border-slate-700 text-white"
+                                            placeholder="Enter name of person who returned"
+                                        />
+                                    </div>
+                                )}
                             </div>
 
+
                             {/* Record History Section */}
-                            <div className="space-y-4 border-t border-slate-800 pt-4">
+                            < div className="space-y-4 border-t border-slate-800 pt-4" >
                                 <Label className="text-lg font-semibold text-white">Record History</Label>
 
                                 <div className="grid grid-cols-2 gap-4">
@@ -1773,31 +1926,34 @@ const ProcurementList: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {editingProcurement.editedBy && (
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Last Edited By</Label>
-                                            <Input
-                                                value={`${editingProcurement.editedByName || 'Unknown'} (${editingProcurement.editedBy})`}
-                                                disabled
-                                                className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
-                                            />
+                                {
+                                    editingProcurement.editedBy && (
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Last Edited By</Label>
+                                                <Input
+                                                    value={`${editingProcurement.editedByName || 'Unknown'} (${editingProcurement.editedBy})`}
+                                                    disabled
+                                                    className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-slate-300">Last Edited At</Label>
+                                                <Input
+                                                    value={editingProcurement.lastEditedAt ? format(new Date(editingProcurement.lastEditedAt), 'MMMM d, yyyy - hh:mm a') : 'N/A'}
+                                                    disabled
+                                                    className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
+                                                />
+                                            </div>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-300">Last Edited At</Label>
-                                            <Input
-                                                value={editingProcurement.lastEditedAt ? format(new Date(editingProcurement.lastEditedAt), 'MMMM d, yyyy - hh:mm a') : 'N/A'}
-                                                disabled
-                                                className="bg-[#1e293b]/50 border-slate-700 text-slate-400 cursor-not-allowed"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                                    )
+                                }
+                            </div >
+                        </div >
+
                     )}
 
-                    <DialogFooter>
+                    <DialogFooter className="p-6 pt-2 border-t border-slate-800 bg-[#0f172a]">
                         <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} className="border-slate-700 text-white hover:bg-slate-800">
                             Cancel
                         </Button>
@@ -1805,40 +1961,52 @@ const ProcurementList: React.FC = () => {
                             Save Changes
                         </Button>
                     </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                </DialogContent >
+            </Dialog >
 
-            {/* Status Change Confirmation Modal */}
-            <AlertDialog open={isStatusConfirmOpen} onOpenChange={setIsStatusConfirmOpen}>
-                <AlertDialogContent className="bg-[#1e293b] border-slate-800 text-white">
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>
-                            {pendingStatusChange?.newStatus === 'active'
-                                ? 'Mark as Borrowed?'
-                                : 'Mark as Available?'}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription className="text-slate-400">
-                            {pendingStatusChange?.newStatus === 'active'
-                                ? 'You will need to enter borrower details in the next step.'
-                                : 'This will mark the file as returned and available. The return date will be automatically recorded.'}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">
-                            Close
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                            onClick={proceedStatusChange}
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
+            {/* Return Modal */}
+            < Dialog open={!!returnModal} onOpenChange={() => setReturnModal(null)}>
+                <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
+                    <DialogHeader>
+                        <DialogTitle>Return File</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Mark this file as returned. Optionally specify who returned it.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="returnedBy" className="text-slate-300">Returned By (Optional)</Label>
+                            <Input
+                                id="returnedBy"
+                                value={returnModal?.returnedBy || ''}
+                                onChange={(e) => setReturnModal(prev =>
+                                    prev ? { ...prev, returnedBy: e.target.value } : null
+                                )}
+                                placeholder="Enter name"
+                                className="bg-[#1e293b] border-slate-700 text-white"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => setReturnModal(null)}
+                            className="border-slate-700 text-white hover:bg-slate-800"
                         >
-                            Proceed
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={confirmReturnFile}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                        >
+                            Confirm Return
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog >
 
             {/* Borrow Edit Modal */}
-            <Dialog open={!!borrowEditModal} onOpenChange={() => setBorrowEditModal(null)}>
+            < Dialog open={!!borrowEditModal} onOpenChange={() => setBorrowEditModal(null)}>
                 <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
                     <DialogHeader>
                         <DialogTitle>Borrow File</DialogTitle>
@@ -1860,16 +2028,22 @@ const ProcurementList: React.FC = () => {
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="division" className="text-slate-300">Division *</Label>
-                            <Input
-                                id="division"
-                                value={borrowEditModal?.division || ''}
-                                onChange={(e) => setBorrowEditModal(prev =>
-                                    prev ? { ...prev, division: e.target.value } : null
+                            <Label htmlFor="division" className="text-slate-300">Borrower Division *</Label>
+                            <Select
+                                value={borrowEditModal?.borrowerDivision}
+                                onValueChange={(val) => setBorrowEditModal(prev =>
+                                    prev ? { ...prev, borrowerDivision: val } : null
                                 )}
-                                placeholder="Enter division"
-                                className="bg-[#1e293b] border-slate-700 text-white"
-                            />
+                            >
+                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                    <SelectValue placeholder="Select Division" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white h-[200px]">
+                                    {divisions.sort((a, b) => a.name.localeCompare(b.name)).map((d) => (
+                                        <SelectItem key={d.id} value={d.name}>{d.name} ({d.abbreviation})</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
                     <DialogFooter>
@@ -1888,7 +2062,7 @@ const ProcurementList: React.FC = () => {
                         </Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog>
+            </Dialog >
             <ProcurementDetailsDialog
                 open={!!viewProcurement}
                 onOpenChange={(open) => !open && setViewProcurement(null)}
@@ -1896,6 +2070,39 @@ const ProcurementList: React.FC = () => {
                 getLocationString={getLocationString}
                 folders={folders}
             />
+            {/* Relocate/Reorder Dialog */}
+            <Dialog open={isRelocateDialogOpen} onOpenChange={setIsRelocateDialogOpen}>
+                <DialogContent className="bg-[#1e293b] border-slate-800 text-white">
+                    <DialogHeader>
+                        <DialogTitle>Relocate / Reorder</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Enter the new stack number for this document.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="stack-number" className="text-right text-slate-300">Stack #</Label>
+                            <Input
+                                id="stack-number"
+                                type="number"
+                                value={newStackNumber}
+                                onChange={(e) => setNewStackNumber(e.target.value ? parseInt(e.target.value) : '')}
+                                className="col-span-3 bg-[#0f172a] border-slate-700 text-white"
+                                placeholder="Enter stack number"
+                                autoFocus
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsRelocateDialogOpen(false)} className="border-slate-700 text-white hover:bg-slate-800">
+                            Cancel
+                        </Button>
+                        <Button onClick={handleRelocateSave} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                            Update Stack Number
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div >
     );
 };

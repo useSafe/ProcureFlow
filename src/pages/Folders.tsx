@@ -44,7 +44,7 @@ import { addFolder, updateFolder, deleteFolder } from '@/lib/storage';
 import { Cabinet, Shelf, Folder, Procurement } from '@/types/procurement';
 import { useData } from '@/contexts/DataContext';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, FileText, Eye, FolderOpen } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, Eye, FolderOpen, ArrowUp } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 
 const Folders: React.FC = () => {
@@ -61,12 +61,16 @@ const Folders: React.FC = () => {
     // UI State
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+    const [isRelocateDialogOpen, setIsRelocateDialogOpen] = useState(false); // New Relocate Modal
     const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
+    const [relocateFolder, setRelocateFolder] = useState<Folder | null>(null); // New Folder to Relocate
+    const [newStackNumber, setNewStackNumber] = useState<number>(0);
 
     // Filter
+    const [filterTier1Id, setFilterTier1Id] = useState<string>(''); // Filter by Shelf (Tier 1)
     const [filterCabinetId, setFilterCabinetId] = useState<string>(cabinetIdFromUrl || '');
     const [searchQuery, setSearchQuery] = useState('');
-    const [sortField, setSortField] = useState<'name' | 'code' | 'contents'>('name');
+    const [sortField, setSortField] = useState<'name' | 'code' | 'contents' | 'stackNumber'>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
     // Bulk Selection
@@ -76,7 +80,8 @@ const Folders: React.FC = () => {
     // Form State
     const [name, setName] = useState('');
     const [code, setCode] = useState('');
-    const [parentCabinetId, setParentCabinetId] = useState(''); // Stores into folder.shelfId
+    const [selectedTier1Id, setSelectedTier1Id] = useState(''); // Tier 1 (Shelf/Cabinet type)
+    const [parentCabinetId, setParentCabinetId] = useState(''); // Tier 2 (Cabinet/Shelf type) - Stores into folder.shelfId
     const [description, setDescription] = useState('');
     const [color, setColor] = useState('#FF6B6B');
 
@@ -95,6 +100,7 @@ const Folders: React.FC = () => {
     const resetForm = () => {
         setName('');
         setCode('');
+        setSelectedTier1Id('');
         setParentCabinetId('');
         setDescription('');
         setColor('#FF6B6B');
@@ -122,7 +128,16 @@ const Folders: React.FC = () => {
         setCurrentFolder(folder);
         setName(folder.name);
         setCode(folder.code);
-        setParentCabinetId(folder.shelfId); // shelfId holds Cabinet ID
+
+        // folder.shelfId is Tier 2 (Cabinet/Shelf type). We need its parent (Tier 1) for the first dropdown.
+        const parentTier2 = shelves.find(s => s.id === folder.shelfId);
+        if (parentTier2) {
+            setSelectedTier1Id(parentTier2.cabinetId);
+        } else {
+            setSelectedTier1Id('');
+        }
+
+        setParentCabinetId(folder.shelfId); // shelfId holds Cabinet ID (Tier 2)
         setDescription(folder.description || '');
         setColor(folder.color || '#FF6B6B');
         setIsEditDialogOpen(true);
@@ -156,6 +171,17 @@ const Folders: React.FC = () => {
     const handleBulkDelete = async () => {
         if (selectedIds.length === 0) return;
 
+        // Validation: Check if any selected folder has contents
+        const foldersWithContents = selectedIds.filter(id => {
+            const stats = getFolderStats(id);
+            return stats.files > 0;
+        });
+
+        if (foldersWithContents.length > 0) {
+            toast.error(`Cannot delete ${foldersWithContents.length} folders because they contain items. Please empty them first.`);
+            return;
+        }
+
         try {
             await Promise.all(selectedIds.map(id => deleteFolder(id)));
             toast.success(`${selectedIds.length} folders deleted successfully`);
@@ -188,13 +214,42 @@ const Folders: React.FC = () => {
         navigate(`/procurement/list?folderId=${folderId}`);
     };
 
-    // Replace the getParentCabinetName function
+    const handleRelocateClick = (folder: Folder) => {
+        setRelocateFolder(folder);
+        setNewStackNumber(folder.stackNumber || 0);
+        setIsRelocateDialogOpen(true);
+    };
+
+    const handleRelocateConfirm = async () => {
+        if (!relocateFolder) return;
+
+        try {
+            await updateFolder(relocateFolder.id, { stackNumber: newStackNumber });
+            setIsRelocateDialogOpen(false);
+            setRelocateFolder(null);
+            toast.success(`Stack number updated to ${newStackNumber}`);
+        } catch (error) {
+            toast.error('Failed to update stack number');
+        }
+    };
+
+    // Helper Functions
     const getParentCabinetName = (shelfId: string): string => {
         // Since data is swapped: shelves array contains Tier 2 (Cabinets)
         // and folders array contains Tier 3 (Folders)
         // Each Folder has shelfId pointing to Tier 2 (in shelves array)
         const parentCabinet = shelves.find(s => s.id === shelfId);
         return parentCabinet ? `${parentCabinet.name} (${parentCabinet.code})` : 'Unknown';
+    };
+
+    const getParentShelfName = (shelfId: string): string => {
+        // folder.shelfId -> Tier 2 (Cabinet)
+        // Tier 2 (Cabinet).cabinetId -> Tier 1 (Shelf)
+        const parentCabinet = shelves.find(s => s.id === shelfId);
+        if (!parentCabinet) return 'Unknown';
+
+        const parentShelf = cabinets.find(c => c.id === parentCabinet.cabinetId);
+        return parentShelf ? `${parentShelf.name} (${parentShelf.code})` : 'Unknown';
     };
 
     // Deep Counts (Folder Stats)
@@ -212,8 +267,18 @@ const Folders: React.FC = () => {
         .filter(folder => {
             // Filter by parent Cabinet (dropdown/URL)
             // folder.shelfId -> Parent Cabinet ID
+            // Filter by parent Cabinet (dropdown/URL)
+            // folder.shelfId -> Parent Cabinet ID
             if (filterCabinetId && filterCabinetId !== 'all' && folder.shelfId !== filterCabinetId) {
                 return false;
+            }
+
+            // Filter by Shelf (Tier 1)
+            if (filterTier1Id && filterTier1Id !== 'all') {
+                const parentCabinet = shelves.find(s => s.id === folder.shelfId);
+                if (!parentCabinet || parentCabinet.cabinetId !== filterTier1Id) {
+                    return false;
+                }
             }
 
             if (searchQuery) {
@@ -240,6 +305,8 @@ const Folders: React.FC = () => {
                 comparison = aNum === bNum ? a.code.localeCompare(b.code) : aNum - bNum;
             } else if (sortField === 'contents') {
                 comparison = getFolderStats(a.id).files - getFolderStats(b.id).files;
+            } else if (sortField === 'stackNumber') {
+                comparison = (a.stackNumber || 0) - (b.stackNumber || 0);
             }
             return sortDirection === 'asc' ? comparison : -comparison;
         });
@@ -289,16 +356,35 @@ const Folders: React.FC = () => {
                             </DialogHeader>
                             <div className="grid gap-4 py-4">
                                 <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label className="text-right text-slate-300">Shelf</Label>
+                                    <select
+                                        value={selectedTier1Id}
+                                        onChange={(e) => {
+                                            setSelectedTier1Id(e.target.value);
+                                            setParentCabinetId(''); // Reset Tier 2 selection
+                                        }}
+                                        className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                                    >
+                                        <option value="">Select Shelf</option>
+                                        {cabinets.map(c => (
+                                            <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
                                     <Label className="text-right text-slate-300">Parent Cabinet</Label>
                                     <select
                                         value={parentCabinetId}
                                         onChange={(e) => setParentCabinetId(e.target.value)}
                                         className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                                        disabled={!selectedTier1Id}
                                     >
                                         <option value="">Select Cabinet</option>
-                                        {cabinets.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-                                        ))}
+                                        {shelves
+                                            .filter(s => s.cabinetId === selectedTier1Id)
+                                            .map(s => (
+                                                <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
+                                            ))}
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-4 items-center gap-4">
@@ -371,15 +457,29 @@ const Folders: React.FC = () => {
                             className="w-[250px] bg-[#1e293b] border-slate-700 text-white"
                         />
                         <Label className="text-slate-300 whitespace-nowrap">Filter:</Label>
+                        <Select value={filterTier1Id} onValueChange={setFilterTier1Id}>
+                            <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
+                                <SelectValue placeholder="All Shelves" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                <SelectItem value="all">All Shelves</SelectItem>
+                                {cabinets.map(c => (
+                                    <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+
                         <Select value={filterCabinetId} onValueChange={setFilterCabinetId}>
                             <SelectTrigger className="w-[200px] bg-[#1e293b] border-slate-700 text-white">
                                 <SelectValue placeholder="All Cabinets" />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                 <SelectItem value="all">All Cabinets</SelectItem>
-                                {cabinets.map(c => (
-                                    <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>
-                                ))}
+                                {shelves
+                                    .filter(s => !filterTier1Id || filterTier1Id === 'all' || s.cabinetId === filterTier1Id)
+                                    .map(s => (
+                                        <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
+                                    ))}
                             </SelectContent>
                         </Select>
                         <Label className="text-slate-300 whitespace-nowrap">Sort:</Label>
@@ -418,9 +518,11 @@ const Folders: React.FC = () => {
                                     />
                                 </TableHead>
                                 <TableHead className="text-slate-300">Name</TableHead>
+                                <TableHead className="text-slate-300">Parent Shelf</TableHead>
                                 <TableHead className="text-slate-300">Parent Cabinet</TableHead>
                                 <TableHead className="text-slate-300">Code</TableHead>
                                 <TableHead className="text-slate-300">Color</TableHead>
+                                <TableHead className="text-center text-slate-300">Stack #</TableHead>
                                 <TableHead className="text-slate-300">Contents</TableHead>
                                 <TableHead className="text-right text-slate-300">Actions</TableHead>
                             </TableRow>
@@ -428,7 +530,7 @@ const Folders: React.FC = () => {
                         <TableBody>
                             {filteredFolders.length === 0 ? (
                                 <TableRow className="border-slate-800">
-                                    <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                                    <TableCell colSpan={9} className="h-24 text-center text-slate-500">
                                         No folders found. Add your first folder.
                                     </TableCell>
                                 </TableRow>
@@ -457,6 +559,9 @@ const Folders: React.FC = () => {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-slate-300">
+                                            {getParentShelfName(folder.shelfId)}
+                                        </TableCell>
+                                        <TableCell className="text-slate-300">
                                             {getParentCabinetName(folder.shelfId)}
                                         </TableCell>
                                         <TableCell>
@@ -475,11 +580,25 @@ const Folders: React.FC = () => {
                                                 </span>
                                             </div>
                                         </TableCell>
+                                        <TableCell className="text-center">
+                                            <span className="text-slate-400 text-sm font-mono">
+                                                {folder.stackNumber ? `↕${folder.stackNumber}` : '-'}
+                                            </span>
+                                        </TableCell>
                                         <TableCell className="text-slate-300">
                                             {getFolderStats(folder.id).files} files
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => handleRelocateClick(folder)}
+                                                    className="h-8 w-8 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+                                                    title="Relocate / Reorder"
+                                                >
+                                                    <ArrowUp className="h-4 w-4" />
+                                                </Button>
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
@@ -562,6 +681,34 @@ const Folders: React.FC = () => {
                 </CardContent>
             </Card>
 
+            <Dialog open={isRelocateDialogOpen} onOpenChange={setIsRelocateDialogOpen}>
+                <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
+                    <DialogHeader>
+                        <DialogTitle>Relocate / Reorder Folder</DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Enter a new stack number for this folder to reorder it within its location.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <Label htmlFor="stackNumber" className="text-slate-300">New Stack Number (Value)</Label>
+                        <Input
+                            id="stackNumber"
+                            type="number"
+                            value={newStackNumber}
+                            onChange={(e) => setNewStackNumber(parseInt(e.target.value) || 0)}
+                            className="bg-[#1e293b] border-slate-700 text-white mt-1.5"
+                            placeholder="Enter number..."
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsRelocateDialogOpen(false)} className="border-slate-700 text-white hover:bg-slate-800">Cancel</Button>
+                        <Button onClick={handleRelocateConfirm} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                            Update Position
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
                 <DialogContent className="bg-[#0f172a] border-slate-800 text-white">
                     <DialogHeader>
@@ -572,16 +719,35 @@ const Folders: React.FC = () => {
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right text-slate-300">Shelf</Label>
+                            <select
+                                value={selectedTier1Id}
+                                onChange={(e) => {
+                                    setSelectedTier1Id(e.target.value);
+                                    setParentCabinetId('');
+                                }}
+                                className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                            >
+                                <option value="">Select Shelf</option>
+                                {cabinets.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
                             <Label className="text-right text-slate-300">Parent Cabinet</Label>
                             <select
                                 value={parentCabinetId}
                                 onChange={(e) => setParentCabinetId(e.target.value)}
                                 className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
+                                disabled={!selectedTier1Id}
                             >
                                 <option value="">Select Cabinet</option>
-                                {cabinets.map(c => (
-                                    <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-                                ))}
+                                {shelves
+                                    .filter(s => s.cabinetId === selectedTier1Id)
+                                    .map(s => (
+                                        <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
+                                    ))}
                             </select>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">

@@ -146,6 +146,17 @@ const Cabinets: React.FC = () => {
     const handleBulkDelete = async () => {
         if (selectedIds.length === 0) return;
 
+        // Validation: Check if any selected cabinet has contents
+        const cabinetsWithContents = selectedIds.filter(id => {
+            const stats = getCabinetStats(id);
+            return stats.folders > 0 || stats.files > 0;
+        });
+
+        if (cabinetsWithContents.length > 0) {
+            toast.error(`Cannot delete ${cabinetsWithContents.length} cabinets because they contain items. Please empty them first.`);
+            return;
+        }
+
         try {
             await Promise.all(selectedIds.map(id => deleteShelf(id)));
             toast.success(`${selectedIds.length} cabinets deleted successfully`);
@@ -179,33 +190,9 @@ const Cabinets: React.FC = () => {
     };
 
     const getParentShelfName = (cabinetId: string): string => {
-        console.group('🔍 Parent Shelf Lookup');
-        console.log('Input cabinetId:', cabinetId);
-        console.log('Type of cabinetId:', typeof cabinetId);
-        
-        console.log('\n📦 Available Cabinets (Tier 1 Shelves):');
-        console.table(cabinets.map(c => ({ 
-            id: c.id, 
-            name: c.name, 
-            code: c.code 
-        })));
-        
-        console.log('\n📚 Available Shelves (Tier 2 Cabinets):');
-        console.table(shelves.map(s => ({ 
-            id: s.id, 
-            name: s.name, 
-            code: s.code,
-            cabinetId: s.cabinetId 
-        })));
-        
-        const parentShelf = cabinets.find(c => {
-            console.log(`Comparing: "${c.id}" === "${cabinetId}"`, c.id === cabinetId);
-            return c.id === cabinetId;
-        });
-        
-        console.log('\n✅ Result:', parentShelf);
-        console.groupEnd();
-        
+        // cabinetId here is actually the ID of the Parent Shelf (Tier 1)
+        // Tier 1 is DB Cabinets
+        const parentShelf = cabinets.find(s => s.id === cabinetId);
         return parentShelf ? `${parentShelf.name} (${parentShelf.code})` : 'Unknown';
     };
 
@@ -228,7 +215,8 @@ const Cabinets: React.FC = () => {
     };
 
     // Filtering and Sorting
-    const filteredCabinets = cabinets
+    // UI "Cabinets" are DB "Shelves"
+    const filteredCabinets = shelves
         .filter(cabinet => {
             // Filter by parent shelf (dropdown)
             // cabinet.cabinetId -> Parent Shelf ID
@@ -316,7 +304,7 @@ const Cabinets: React.FC = () => {
                                         className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
                                     >
                                         <option value="">Select Shelf</option>
-                                        {shelves.map(s => (
+                                        {cabinets.map(s => (
                                             <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
                                         ))}
                                     </select>
@@ -359,7 +347,7 @@ const Cabinets: React.FC = () => {
                             </SelectTrigger>
                             <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
                                 <SelectItem value="all">All Shelves</SelectItem>
-                                {shelves.map(s => (
+                                {cabinets.map(s => (
                                     <SelectItem key={s.id} value={s.id}>{s.code} - {s.name}</SelectItem>
                                 ))}
                             </SelectContent>
@@ -547,7 +535,7 @@ const Cabinets: React.FC = () => {
                                 className="col-span-3 bg-[#1e293b] border-slate-700 text-white rounded-md p-2"
                             >
                                 <option value="">Select Shelf</option>
-                                {shelves.map(s => (
+                                {cabinets.map(s => (
                                     <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
                                 ))}
                             </select>

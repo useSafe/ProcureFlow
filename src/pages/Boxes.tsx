@@ -4,6 +4,7 @@ import { Box } from '@/types/procurement';
 import { addBox, updateBox, deleteBox } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import {
     Table,
@@ -263,7 +264,7 @@ const Boxes: React.FC = () => {
                                 </div>
                                 <div className="grid grid-cols-4 items-center gap-4">
                                     <Label htmlFor="desc" className="text-right text-slate-300">Description</Label>
-                                    <Input
+                                    <Textarea
                                         id="desc"
                                         value={formData.description}
                                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}

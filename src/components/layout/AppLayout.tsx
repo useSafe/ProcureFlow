@@ -41,7 +41,9 @@ import {
   Map,
   ChevronLeft,
   Settings,
-  Building2
+  Building2,
+  Library,
+  Archive
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -64,10 +66,10 @@ const navItems: NavItem[] = [
   { path: '/boxes', label: 'Boxes', icon: Package }, // Added Boxes
   {
     label: 'Storages',
-    icon: Package,
+    icon: Library,
     children: [
       { path: '/shelves', label: 'Shelves', icon: Layers },
-      { path: '/cabinets', label: 'Cabinets', icon: Package },
+      { path: '/cabinets', label: 'Cabinets', icon: Archive },
       { path: '/folders', label: 'Folders', icon: FolderOpen },
     ],
   },
@@ -262,7 +264,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
       <aside
         className={cn(
           "hidden border-r border-border bg-card lg:block h-screen sticky top-0 transition-all duration-300",
-          isCollapsed ? "w-20" : "w-64"
+          isCollapsed ? "w-[56px]" : "w-64"
         )}
       >
         <NavContent />

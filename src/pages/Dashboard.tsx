@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange } from '@/lib/storage';
+import { onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange, onBoxesChange } from '@/lib/storage';
 import { initializeDummyData } from '@/lib/initDummyData';
-import { Procurement, Cabinet, Shelf, Folder } from '@/types/procurement';
-import { FileText, Archive, Layers, Package, FolderOpen, Clock, TrendingUp, Database, Download, Search, Plus, Eye, Map as MapIcon } from 'lucide-react';
+import { Procurement, Cabinet, Shelf, Folder, Box } from '@/types/procurement';
+import { FileText, Archive, Layers, Package, FolderOpen, Clock, TrendingUp, Database, Download, Search, Plus, Eye, Map as MapIcon, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ChartContainer,
@@ -23,6 +23,7 @@ const Dashboard: React.FC = () => {
   const [cabinets, setCabinets] = useState<Cabinet[]>([]); // Shelves (Tier 1)
   const [shelves, setShelves] = useState<Shelf[]>([]); // Cabinets (Tier 2)
   const [folders, setFolders] = useState<Folder[]>([]); // Folders (Tier 3)
+  const [boxes, setBoxes] = useState<Box[]>([]); // Boxes
   const [isInitializing, setIsInitializing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -32,12 +33,14 @@ const Dashboard: React.FC = () => {
     const unsubCabinets = onCabinetsChange(setCabinets);
     const unsubShelves = onShelvesChange(setShelves);
     const unsubFolders = onFoldersChange(setFolders);
+    const unsubBoxes = onBoxesChange(setBoxes);
 
     return () => {
       unsubProcurements();
       unsubCabinets();
       unsubShelves();
       unsubFolders();
+      unsubBoxes();
     };
   }, []);
 
@@ -49,22 +52,26 @@ const Dashboard: React.FC = () => {
       totalShelves: cabinets.length,
       totalCabinets: shelves.length,
       totalFolders: folders.length,
+      totalBoxes: boxes.length,
     }
-  }, [procurements, cabinets, shelves, folders]);
+  }, [procurements, cabinets, shelves, folders, boxes]);
 
   // Shelf statistics (cabinetId in procurement points to Shelf)
   const shelfStats = useMemo(() => {
-    return cabinets.map(shelf => ({
+    // 1. Calculate stats for Shelves (TIER 1) ONLY
+    const shelfData = cabinets.map(shelf => ({
       id: shelf.id,
       name: shelf.name,
       code: shelf.code,
       count: (procurements || []).filter(p => p.cabinetId === shelf.id).length
-    })).filter(s => s.count > 0).sort((a, b) => b.count - a.count);
+    }));
+
+    return shelfData.filter(s => s.count > 0).sort((a, b) => b.count - a.count);
   }, [cabinets, procurements]);
 
   // Calculate detailed hierarchy data for the unified chart
   const hierarchyData = useMemo(() => {
-    return cabinets.map(shelf => {
+    const data = cabinets.map(shelf => {
       // Tier 2: Cabinets in this Tier 1 Shelf
       const validCabinets = shelves.filter(c => c.cabinetId === shelf.id);
 
@@ -76,17 +83,38 @@ const Dashboard: React.FC = () => {
 
       return {
         name: shelf.code,
+        Shelves: 1, // Represents the Shelf itself
         Cabinets: validCabinets.length,
         Folders: validFolders.length,
-        Files: validFiles.length
+        Files: validFiles.length,
+        Boxes: 0,
+        type: 'shelf'
       };
-    });
-  }, [cabinets, shelves, folders, procurements]);
+    }).concat(boxes.map(box => ({
+      name: box.code,
+      Shelves: 0,
+      Cabinets: 0,
+      Folders: 0,
+      Files: procurements.filter(p => p.boxId === box.id).length,
+      Boxes: 1, // Represents the Box itself
+      type: 'box'
+    })));
+
+    // Sort by Files (Descending) and limit to Top 10
+    return data.sort((a, b) => b.Files - a.Files).slice(0, 10);
+  }, [cabinets, shelves, folders, procurements, boxes]);
 
   const pieData = [
     { name: 'Borrowed', value: metrics.active, fill: '#f59e0b' },
     { name: 'Archived', value: metrics.archived, fill: '#10b981' },
   ];
+
+  const progressData = [
+    { name: 'Success', value: (procurements || []).filter(p => p.progressStatus === 'Success').length, fill: '#10b981' },
+    { name: 'Failed', value: (procurements || []).filter(p => p.progressStatus === 'Failed').length, fill: '#ef4444' },
+    { name: 'Cancelled', value: (procurements || []).filter(p => p.progressStatus === 'Cancelled').length, fill: '#64748b' },
+    { name: 'Pending', value: (procurements || []).filter(p => !p.progressStatus || p.progressStatus === 'Pending').length, fill: '#eab308' },
+  ].filter(d => d.value > 0);
 
   // Top 10 shelves by record count
   const topShelves = shelfStats.slice(0, 10);
@@ -204,13 +232,21 @@ const Dashboard: React.FC = () => {
       description: 'Tier 3'
     },
     {
-      title: 'Total Records',
-      value: metrics.totalRecords,
-      icon: FileText,
-      bg: 'bg-emerald-600',
+      title: 'Total Boxes',
+      value: metrics.totalBoxes,
+      icon: Package,
+      bg: 'bg-indigo-600',
       text: 'text-white',
-      description: 'All files'
+      description: 'Storage Boxes'
     },
+    // {
+    //   title: 'Total Records',
+    //   value: metrics.totalRecords,
+    //   icon: FileText,
+    //   bg: 'bg-emerald-600',
+    //   text: 'text-white',
+    //   description: 'All files'
+    // },
   ];
 
   const statusCards = [
@@ -407,8 +443,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Charts Row */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-3">
           {/* Status Distribution Chart */}
           <Card className="border-none bg-[#0f172a] text-white shadow-lg">
             <CardHeader>
@@ -465,6 +500,48 @@ const Dashboard: React.FC = () => {
                   <span className="text-4xl font-bold text-white">{metrics.totalRecords}</span>
                   <span className="text-sm text-slate-400">Total Files</span>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Progress Status Chart */}
+          <Card className="border-none bg-[#0f172a] text-white shadow-lg">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5 text-blue-400" />
+                Progress Status
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[280px] relative">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={progressData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={70}
+                      outerRadius={100}
+                      paddingAngle={5}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      {progressData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff', borderRadius: '8px' }}
+                      itemStyle={{ color: '#fff' }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={36}
+                      iconType="circle"
+                      wrapperStyle={{ paddingTop: '20px' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
             </CardContent>
           </Card>
@@ -539,16 +616,59 @@ const Dashboard: React.FC = () => {
             <div className="h-[350px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hierarchyData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                  <XAxis dataKey="name" stroke="#94a3b8" />
-                  <YAxis stroke="#94a3b8" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+                  <YAxis stroke="#94a3b8" fontSize={12} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#fff' }}
-                    cursor={{ fill: '#334155', opacity: 0.4 }}
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="bg-[#1e293b] border border-slate-700 p-3 rounded-lg shadow-xl">
+                            <p className="font-semibold text-white mb-2">{label}</p>
+                            {data.type === 'box' ? (
+                              <div className="space-y-1">
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#db2777] mr-2"></span>
+                                  Boxes: <span className="text-white font-bold ml-1">{data.Boxes}</span>
+                                </p>
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#10b981] mr-2"></span>
+                                  Files: <span className="text-white font-bold ml-1">{data.Files}</span>
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#2563eb] mr-2"></span>
+                                  Shelves: <span className="text-white font-bold ml-1">1</span>
+                                </p>
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#9333ea] mr-2"></span>
+                                  Cabinets: <span className="text-white font-bold ml-1">{data.Cabinets}</span>
+                                </p>
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#d97706] mr-2"></span>
+                                  Folders: <span className="text-white font-bold ml-1">{data.Folders}</span>
+                                </p>
+                                <p className="text-sm text-slate-300 flex items-center">
+                                  <span className="w-2 h-2 rounded-full bg-[#10b981] mr-2"></span>
+                                  Files: <span className="text-white font-bold ml-1">{data.Files}</span>
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
                   />
-                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                  <Bar dataKey="Cabinets" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Cabinets" />
-                  <Bar dataKey="Folders" fill="#10b981" radius={[4, 4, 0, 0]} name="Folders" />
-                  <Bar dataKey="Files" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Files" />
+                  <Legend />
+                  <Bar dataKey="Shelves" name="Shelves" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Cabinets" name="Cabinets" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Folders" name="Folders" fill="#d97706" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Files" name="Files" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Boxes" name="Boxes" fill="#db2777" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

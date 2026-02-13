@@ -42,6 +42,14 @@ const MONTHS = [
     { value: 'DEC', label: 'December' },
 ];
 
+const PROCUREMENT_TYPES = [
+    'Regular Bidding',
+    'Small Value Procurement(SVP)',
+    'Attendance Sheets',
+    'Receipt',
+    'Others'
+] as const;
+
 const AddProcurement: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
@@ -56,13 +64,16 @@ const AddProcurement: React.FC = () => {
     const [availableFolders, setAvailableFolders] = useState<Folder[]>([]);
 
     // Form State
-    const [procurementType, setProcurementType] = useState<'Regular Bidding' | 'SVP'>('Regular Bidding');
+    const [procurementType, setProcurementType] = useState<typeof PROCUREMENT_TYPES[number]>('Regular Bidding');
     const [projectName, setProjectName] = useState('');
     const [description, setDescription] = useState('');
     const [status, setStatus] = useState<ProcurementStatus>('archived'); // Default to Archived
     const [progressStatus, setProgressStatus] = useState<ProgressStatus>('Pending');
     const [dateAdded, setDateAdded] = useState<Date | undefined>(new Date());
-    const [procurementDate, setProcurementDate] = useState<Date | undefined>(undefined); // Date Published
+    // Split Procurement Date State
+    const [procDateMonth, setProcDateMonth] = useState<string>('');
+    const [procDateDay, setProcDateDay] = useState<string>('');
+    const [procDateYear, setProcDateYear] = useState<string>('');
 
     // PR Number State
     const [selectedDivisionId, setSelectedDivisionId] = useState('');
@@ -168,16 +179,30 @@ const AddProcurement: React.FC = () => {
 
     // Derived PR Number
     const selectedDivision = divisions.find(d => d.id === selectedDivisionId);
-    // Format: DIV-MMM-YY-SEQ (e.g., IT-FEB-26-001)
-    const generatedPRNumber = `${selectedDivision ? selectedDivision.abbreviation : 'XXX'}-${prMonth}-${prYear}-${prSequence}`;
+
+    // Helper to check if type is special (hides extra fields)
+    const isSpecialType = ['Attendance Sheets', 'Receipt', 'Others'].includes(procurementType);
+
+    // Format: DIV-MMM-YY-SEQ (e.g., IT-FEB-26-001) OR 'N/A' for special types
+    const generatedPRNumber = isSpecialType
+        ? 'N/A'
+        : `${selectedDivision ? selectedDivision.abbreviation : 'XXX'}-${prMonth}-${prYear}-${prSequence}`;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
         // Validation
-        if (!selectedDivisionId || !prSequence || !description) {
-            toast.error('Please fill in all required fields (Division, Sequence, Description)');
+        if (!description) {
+            toast.error('Description is required');
             return;
+        }
+
+        // Only validate Division/Sequence for regular types
+        if (!isSpecialType) {
+            if (!selectedDivisionId || !prSequence) {
+                toast.error('Please fill in all required fields (Division, Sequence)');
+                return;
+            }
         }
 
         if (storageMode === 'shelf' && (!cabinetId || !shelfId || !folderId)) {
@@ -201,7 +226,7 @@ const AddProcurement: React.FC = () => {
                 description,
                 projectName,
                 procurementType,
-                division: selectedDivision?.name, // Store Name
+                division: selectedDivision?.name || 'N/A', // Store Name or N/A
 
                 // Location
                 cabinetId: storageMode === 'shelf' ? cabinetId : undefined,
@@ -209,13 +234,15 @@ const AddProcurement: React.FC = () => {
                 folderId: storageMode === 'shelf' ? folderId : undefined,
                 boxId: storageMode === 'box' ? boxId : undefined,
 
-                status,
-                progressStatus,
+                status, // User can now select status for all types
+                progressStatus: isSpecialType ? 'Pending' : progressStatus, // Default to Pending if hidden
                 urgencyLevel: 'medium',
                 dateAdded: dateAdded ? dateAdded.toISOString() : new Date().toISOString(),
-                procurementDate: procurementDate ? procurementDate.toISOString() : undefined,
+                procurementDate: (procDateMonth && procDateDay && procDateYear)
+                    ? new Date(`${procDateMonth} ${procDateDay}, ${procDateYear}`).toISOString()
+                    : undefined,
                 disposalDate,
-                checklist: procurementType === 'Regular Bidding' ? checklist : undefined,
+                checklist: (!isSpecialType && procurementType === 'Regular Bidding') ? checklist : undefined,
                 tags: [],
             };
 
@@ -260,14 +287,15 @@ const AddProcurement: React.FC = () => {
                                     <Label className="text-slate-300">Procurement Type</Label>
                                     <Select
                                         value={procurementType}
-                                        onValueChange={(val: 'Regular Bidding' | 'SVP') => setProcurementType(val)}
+                                        onValueChange={(val: any) => setProcurementType(val)}
                                     >
                                         <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="SVP">Small Value Procurement (SVP)</SelectItem>
-                                            <SelectItem value="Regular Bidding">Regular Bidding</SelectItem>
+                                            {PROCUREMENT_TYPES.map(type => (
+                                                <SelectItem key={type} value={type}>{type}</SelectItem>
+                                            ))}
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -281,74 +309,100 @@ const AddProcurement: React.FC = () => {
                                         className="bg-[#1e293b] border-slate-700 text-white placeholder:text-slate-500"
                                     />
                                 </div>
-                            </div>
 
-                            {/* PR Number Construction */}
-                            <div className="p-4 rounded-lg bg-[#1e293b]/50 border border-slate-700/50 space-y-4">
-                                <Label className="text-slate-300">PR Number Construction</Label>
-                                <div className="grid gap-4 md:grid-cols-4 items-end">
-                                    <div className="space-y-2">
-                                        <Label className="text-xs text-slate-400">Division</Label>
-                                        <Select value={selectedDivisionId} onValueChange={setSelectedDivisionId}>
-                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                <SelectValue placeholder="Select Division" />
-                                            </SelectTrigger>
-                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                {[...divisions].sort((a, b) => a.name.localeCompare(b.name)).map(div => (
-                                                    <SelectItem key={div.id} value={div.id}>{div.name}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label className="text-xs text-slate-400">Month</Label>
-                                        <Select value={prMonth} onValueChange={setPrMonth}>
-                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
-                                                {MONTHS.map(m => (
-                                                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label className="text-xs text-slate-400">Year (YY)</Label>
-                                        <Input
-                                            type="text"
-                                            maxLength={2}
-                                            value={prYear}
-                                            onChange={(e) => setPrYear(e.target.value)}
-                                            className="bg-[#1e293b] border-slate-700 text-white"
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label className="text-xs text-slate-400">Sequence</Label>
-                                        <Input
-                                            value={prSequence}
-                                            onChange={(e) => setPrSequence(e.target.value)}
-                                            className="bg-[#1e293b] border-slate-700 text-white"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="mt-2 text-sm text-slate-400">
-                                    Preview: <span className="font-mono text-emerald-400 font-bold ml-2">{generatedPRNumber}</span>
+                                <div className="space-y-2">
+                                    <Label className="text-slate-300">Division</Label>
+                                    <Select value={selectedDivisionId} onValueChange={setSelectedDivisionId}>
+                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                            <SelectValue placeholder="Select Division" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                            {[...divisions].sort((a, b) => a.name.localeCompare(b.name)).map(div => (
+                                                <SelectItem key={div.id} value={div.id}>{div.name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
+
+                            {/* PR Number Construction - Conditional */}
+                            {!isSpecialType && (
+                                <div className="p-4 rounded-lg bg-[#1e293b]/50 border border-slate-700/50 space-y-4">
+                                    <Label className="text-slate-300">PR Number Construction</Label>
+                                    <div className="grid gap-4 md:grid-cols-3 items-end">
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-slate-400">Month</Label>
+                                            <Select value={prMonth} onValueChange={setPrMonth}>
+                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
+                                                    {MONTHS.map(m => (
+                                                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-slate-400">Year (YY)</Label>
+                                            <Input
+                                                type="text"
+                                                maxLength={2}
+                                                value={prYear}
+                                                onChange={(e) => setPrYear(e.target.value)}
+                                                className="bg-[#1e293b] border-slate-700 text-white"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-slate-400">Sequence</Label>
+                                            <Input
+                                                value={prSequence}
+                                                onChange={(e) => setPrSequence(e.target.value)}
+                                                className="bg-[#1e293b] border-slate-700 text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="mt-2 text-sm text-slate-400">
+                                        Preview: <span className="font-mono text-emerald-400 font-bold ml-2">{generatedPRNumber}</span>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="grid gap-4 md:grid-cols-2">
                                 <div className="space-y-2">
-                                    <Label className="text-slate-300">Procurement Date (Date Published)</Label>
-                                    <Input
-                                        type="date"
-                                        value={procurementDate ? format(procurementDate, 'yyyy-MM-dd') : ''}
-                                        onChange={(e) => setProcurementDate(e.target.value ? new Date(e.target.value) : undefined)}
-                                        className="bg-[#1e293b] border-slate-700 text-white block w-full"
-                                    />
+                                    <Label className="text-slate-300">Procurement Date (Date Received)</Label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <Select value={procDateMonth} onValueChange={setProcDateMonth}>
+                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectValue placeholder="Month" />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white h-[200px]">
+                                                {MONTHS.map(m => (
+                                                    <SelectItem key={m.value} value={m.label}>{m.label}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <Input
+                                            type="number"
+                                            placeholder="Day"
+                                            value={procDateDay}
+                                            onChange={(e) => setProcDateDay(e.target.value)}
+                                            className="bg-[#1e293b] border-slate-700 text-white"
+                                            min={1}
+                                            max={31}
+                                        />
+                                        <Input
+                                            type="number"
+                                            placeholder="Year"
+                                            value={procDateYear}
+                                            onChange={(e) => setProcDateYear(e.target.value)}
+                                            className="bg-[#1e293b] border-slate-700 text-white"
+                                            min={2000}
+                                            max={2100}
+                                        />
+                                    </div>
                                 </div>
                                 <div className="space-y-2">
                                     <Label className="text-slate-300">Date Added (Created)</Label>
@@ -389,7 +443,7 @@ const AddProcurement: React.FC = () => {
                     </Card>
 
                     {/* Checklist (Conditional) */}
-                    {procurementType === 'Regular Bidding' && (
+                    {!isSpecialType && (
                         <Card className="border-none bg-[#0f172a] shadow-lg animate-in fade-in slide-in-from-top-4 duration-300">
                             <CardContent className="p-6 space-y-4">
                                 <div>
@@ -424,7 +478,7 @@ const AddProcurement: React.FC = () => {
                                     </div>
                                     <p className="text-sm text-slate-400">Required documents for Regular Bidding</p>
                                 </div>
-                                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                                     {[
                                         { key: 'noticeToProceed', label: 'A. Notice to Proceed' },
                                         { key: 'biddersTechFinancialProposals', label: 'L. Bidders Technical and Financial Proposals' },
@@ -587,43 +641,46 @@ const AddProcurement: React.FC = () => {
                                     </Select>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <Label className="text-slate-300">Progress Status</Label>
-                                    <Select value={progressStatus} onValueChange={(val) => setProgressStatus(val as ProgressStatus)}>
-                                        <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                            <SelectItem value="Pending" className="text-yellow-400">Pending</SelectItem>
-                                            <SelectItem value="Success" className="text-emerald-400">Success</SelectItem>
-                                            <SelectItem value="Failed" className="text-red-400">Failed</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            </div>
-
-                            <Button
-                                type="submit"
-                                disabled={isLoading}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4"
-                            >
-                                {isLoading ? (
-                                    <>
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        Saving...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Save className="mr-2 h-4 w-4" />
-                                        Save Record
-                                    </>
+                                {!isSpecialType && (
+                                    <div className="space-y-2">
+                                        <Label className="text-slate-300">Progress Status</Label>
+                                        <Select value={progressStatus} onValueChange={(val) => setProgressStatus(val as ProgressStatus)}>
+                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                                <SelectItem value="Pending" className="text-yellow-400">Pending</SelectItem>
+                                                <SelectItem value="Success" className="text-emerald-400">Success</SelectItem>
+                                                <SelectItem value="Failed" className="text-red-400">Failed</SelectItem>
+                                                <SelectItem value="Cancelled" className="text-slate-400">Cancelled</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 )}
-                            </Button>
+                            </div>
                         </CardContent>
                     </Card>
+
+                    <Button
+                        type="submit"
+                        disabled={isLoading}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4"
+                    >
+                        {isLoading ? (
+                            <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Saving...
+                            </>
+                        ) : (
+                            <>
+                                <Save className="mr-2 h-4 w-4" />
+                                Save Record
+                            </>
+                        )}
+                    </Button>
                 </div>
-            </form>
-        </div>
+            </form >
+        </div >
     );
 };
 

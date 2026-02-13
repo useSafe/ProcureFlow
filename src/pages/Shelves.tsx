@@ -129,6 +129,17 @@ const Shelves: React.FC = () => {
     const handleBulkDelete = async () => {
         if (selectedIds.length === 0) return;
 
+        // Validation: Check if any selected shelf has contents
+        const shelvesWithContents = selectedIds.filter(id => {
+            const stats = getShelfStats(id);
+            return stats.cabinets > 0 || stats.folders > 0 || stats.files > 0;
+        });
+
+        if (shelvesWithContents.length > 0) {
+            toast.error(`Cannot delete ${shelvesWithContents.length} shelves because they contain items. Please empty them first.`);
+            return;
+        }
+
         try {
             await Promise.all(selectedIds.map(id => deleteCabinet(id)));
             toast.success(`${selectedIds.length} shelves deleted successfully`);
@@ -163,13 +174,13 @@ const Shelves: React.FC = () => {
 
     // Deep Counts Logic
     const getShelfStats = (shelfId: string) => {
-        // Find Cabinets in this Shelf
-        // Cabinets (Tier 2) have cabinetId pointing to Shelf (Tier 1) - Corrected for Data Swap
-        const myCabinets = (cabinets as unknown as Shelf[]).filter(c => c.cabinetId === shelfId);
+        // UI Shelf (Tier 1) -> DB Cabinet (id = shelfId)
+        // Children are UI Cabinets (Tier 2) -> DB Shelves (cabinetId = shelfId)
+        const myCabinets = shelves.filter(s => s.cabinetId === shelfId); // Count DB Shelves
         const myCabinetIds = myCabinets.map(c => c.id);
 
         // Find Folders in these Cabinets
-        // Folders have shelfId pointing to Cabinet ID (Data Swap Logic)
+        // DB Folders point to DB Shelves (shelfId -> DB Shelf ID)
         const myFolders = folders.filter(f => myCabinetIds.includes(f.shelfId));
         const myFolderIds = myFolders.map(f => f.id);
 
@@ -184,7 +195,8 @@ const Shelves: React.FC = () => {
     };
 
     // Filtering and Sorting
-    const filteredShelves = shelves
+    // UI "Shelves" are DB "Cabinets"
+    const filteredShelves = cabinets
         .filter(shelf => {
             if (searchQuery) {
                 const query = searchQuery.toLowerCase();

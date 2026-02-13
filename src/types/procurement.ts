@@ -1,6 +1,6 @@
 export type ProcurementStatus = 'active' | 'archived';
 export type UrgencyLevel = 'low' | 'medium' | 'high' | 'critical';
-export type ProgressStatus = 'Pending' | 'Success' | 'Failed';
+export type ProgressStatus = 'Pending' | 'Success' | 'Failed' | 'Cancelled';
 
 // Location Hierarchy Types
 export interface Cabinet {
@@ -27,6 +27,7 @@ export interface Folder {
     code: string; // e.g., "F1", "F2"
     description?: string;
     color?: string; // Hex color code
+    stackNumber?: number; // For ordering
     createdAt: string;
 }
 
@@ -84,10 +85,10 @@ export interface Procurement {
     dateAdded: string; // Date the record was added to system
 
     // Location tracking (Cabinet > Shelf > Folder OR Box)
-    cabinetId?: string;
-    shelfId?: string;
-    folderId?: string;
-    boxId?: string;
+    cabinetId?: string | null;
+    shelfId?: string | null;
+    folderId?: string | null;
+    boxId?: string | null;
 
     // Status
     status: ProcurementStatus;
@@ -95,7 +96,7 @@ export interface Procurement {
     progressStatus?: ProgressStatus; // New: Pending, Success, Failed
 
     // Metadata
-    procurementType?: 'Regular Bidding' | 'SVP';
+    procurementType?: 'Regular Bidding' | 'SVP' | 'Attendance Sheets' | 'Receipt' | 'Others';
     projectName?: string;
     division?: string; // Stores the Division Abbreviation or Name (User requested Dropdown reflecting this)
     procurementDate?: string; // New: Date Published / Procurement Date (ISO)
@@ -108,6 +109,7 @@ export interface Procurement {
     borrowerDivision?: string; // New: Division of the borrower, separate from file division
     borrowedDate?: string;
     returnDate?: string;
+    returnedBy?: string; // New: Name of the person who returned the file
 
     // Stack number (position in folder, only for 'archived'/Available files)
     stackNumber?: number;
