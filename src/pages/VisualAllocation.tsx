@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { useData } from '@/contexts/DataContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Layers, Package, Folder as FolderIcon, FileText, ChevronRight, ArrowLeft, Archive, Grid } from 'lucide-react';
+import { Layers, Package, Folder as FolderIcon, FileText, ChevronRight, ArrowLeft, Archive, Grid, Inbox, ClipboardList, BookOpen, Gavel, ListChecks, ShieldCheck, ScrollText, FileCheck, Award, Send, Building2, BadgeCheck, PackageCheck } from 'lucide-react';
 import { Cabinet, Shelf, Folder, Procurement, Box } from '@/types/procurement';
 import { format } from 'date-fns';
+import { CHECKLIST_ITEMS } from '@/lib/constants';
 import {
     Dialog,
     DialogContent,
@@ -12,6 +13,133 @@ import {
     DialogTitle,
     DialogDescription,
 } from '@/components/ui/dialog';
+
+// ─── Phase Definitions & Helpers (Copied from ProgressTracking) ────────────────
+
+interface Phase {
+    key: string;
+    label: string;
+    shortLabel: string;
+    icon: React.ElementType;
+    dateField: keyof Procurement;
+}
+
+const REGULAR_PHASES: Phase[] = [
+    { key: 'receivedPrDate', label: 'Received PR', shortLabel: 'Recv PR', icon: Inbox, dateField: 'receivedPrDate' },
+    { key: 'prDeliberatedDate', label: 'PR Deliberated', shortLabel: 'PR Delib', icon: ClipboardList, dateField: 'prDeliberatedDate' },
+    { key: 'publishedDate', label: 'Published', shortLabel: 'Published', icon: FileText, dateField: 'publishedDate' },
+    { key: 'preBidDate', label: 'Pre-Bid', shortLabel: 'Pre-Bid', icon: BookOpen, dateField: 'preBidDate' },
+    { key: 'bidOpeningDate', label: 'Bid Opening', shortLabel: 'Bid Open', icon: Gavel, dateField: 'bidOpeningDate' },
+    { key: 'bidEvaluationDate', label: 'Bid Evaluation', shortLabel: 'Bid Eval', icon: ListChecks, dateField: 'bidEvaluationDate' },
+    { key: 'postQualDate', label: 'Post-Qualification', shortLabel: 'Post-Qual', icon: ShieldCheck, dateField: 'postQualDate' },
+    { key: 'postQualReportDate', label: 'Post-Qual Report', shortLabel: 'PQ Report', icon: ScrollText, dateField: 'postQualReportDate' },
+    { key: 'bacResolutionDate', label: 'BAC Resolution', shortLabel: 'BAC Res', icon: FileCheck, dateField: 'bacResolutionDate' },
+    { key: 'noaDate', label: 'NOA', shortLabel: 'NOA', icon: Award, dateField: 'noaDate' },
+    { key: 'contractDate', label: 'Contract Date', shortLabel: 'Contract', icon: ScrollText, dateField: 'contractDate' },
+    { key: 'ntpDate', label: 'NTP', shortLabel: 'NTP', icon: Send, dateField: 'ntpDate' },
+    { key: 'forwardedOapiDate', label: 'Forwarded to OAPIA', shortLabel: 'To OAPIA', icon: Building2, dateField: 'forwardedOapiDate' },
+    { key: 'awardedToDate', label: 'Awarded to Supplier', shortLabel: 'Awarded', icon: BadgeCheck, dateField: 'awardedToDate' },
+];
+
+const SVP_PHASES: Phase[] = [
+    { key: 'receivedPrDate', label: 'Received PR', shortLabel: 'Recv PR', icon: Inbox, dateField: 'receivedPrDate' },
+    { key: 'prDeliberatedDate', label: 'PR Deliberated', shortLabel: 'PR Delib', icon: ClipboardList, dateField: 'prDeliberatedDate' },
+    { key: 'publishedDate', label: 'Published', shortLabel: 'Published', icon: FileText, dateField: 'publishedDate' },
+    { key: 'rfqCanvassDate', label: 'RFQ for Canvass', shortLabel: 'RFQ Canv', icon: BookOpen, dateField: 'rfqCanvassDate' },
+    { key: 'rfqOpeningDate', label: 'RFQ Opening', shortLabel: 'RFQ Open', icon: Gavel, dateField: 'rfqOpeningDate' },
+    { key: 'bacResolutionDate', label: 'BAC Resolution', shortLabel: 'BAC Res', icon: FileCheck, dateField: 'bacResolutionDate' },
+    { key: 'forwardedGsdDate', label: 'Forwarded to GSD', shortLabel: 'To GSD', icon: PackageCheck, dateField: 'forwardedGsdDate' },
+];
+
+// Phase circle color based on completion
+const getPhaseColor = (completed: boolean, isCurrent: boolean, status: string) => {
+    if (!completed) return { circle: 'bg-slate-800 border-slate-700', icon: 'text-slate-600', connector: 'bg-slate-700' };
+
+    // Use pure colors for active phases
+    if (status === 'Completed') {
+        return { circle: 'bg-green-500/20 border-green-500', icon: 'text-green-400', connector: 'bg-green-500/60' };
+    }
+    if (status === 'In Progress') {
+        return {
+            circle: isCurrent
+                ? 'bg-yellow-400/30 border-yellow-400 ring-4 ring-yellow-400/20'
+                : 'bg-yellow-400/15 border-yellow-400/60',
+            icon: isCurrent ? 'text-yellow-300' : 'text-yellow-400',
+            connector: 'bg-yellow-400/50'
+        };
+    }
+    if (status === 'Returned PR to EU') {
+        return { circle: 'bg-purple-500/20 border-purple-500', icon: 'text-purple-400', connector: 'bg-purple-500/50' };
+    }
+    if (status === 'Failure') {
+        return { circle: 'bg-red-500/20 border-red-500', icon: 'text-red-400', connector: 'bg-red-500/50' };
+    }
+    if (status === 'Cancelled') {
+        return { circle: 'bg-orange-500/20 border-orange-500', icon: 'text-orange-400', connector: 'bg-orange-500/50' };
+    }
+    return { circle: 'bg-blue-500/20 border-blue-500', icon: 'text-blue-400', connector: 'bg-blue-500/50' };
+};
+
+const getCurrentPhaseIndex = (p: Procurement, phases: Phase[]): number => {
+    let lastCompleted = -1;
+    phases.forEach((phase, i) => {
+        if (p[phase.dateField]) lastCompleted = i;
+    });
+    return lastCompleted;
+};
+
+// Phase Pipeline Component
+const PhasePipeline = ({ procurement }: { procurement: Procurement }) => {
+    const phases = procurement.procurementType === 'SVP' ? SVP_PHASES : REGULAR_PHASES;
+    const currentIdx = getCurrentPhaseIndex(procurement, phases);
+    const effectiveStatus = procurement.procurementStatus || 'Not yet Acted';
+
+    return (
+        <div className="flex items-center gap-0 w-full overflow-x-auto min-w-0 py-4 px-1 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+            {phases.map((phase, i) => {
+                const completed = !!procurement[phase.dateField];
+                const isCurrent = i === currentIdx;
+                const colors = getPhaseColor(completed, isCurrent, effectiveStatus);
+                const Icon = phase.icon;
+                const dateVal = procurement[phase.dateField] as string | undefined;
+
+                return (
+                    <React.Fragment key={phase.key}>
+                        {/* Phase Circle */}
+                        <div className="flex flex-col items-center flex-shrink-0 group relative px-1">
+                            <div
+                                className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-lg ${colors.circle} ${isCurrent ? 'scale-110' : 'scale-100'}`}
+                            >
+                                <Icon className={`h-4 w-4 ${colors.icon}`} strokeWidth={2} />
+                            </div>
+
+                            {/* Label */}
+                            <div className={`mt-2 text-center transition-opacity flex flex-col items-center
+                                ${completed || isCurrent ? 'opacity-100' : 'opacity-60 grayscale group-hover:opacity-100 group-hover:grayscale-0'}
+                            `}>
+                                <span className={`text-[8px] font-bold uppercase tracking-wider mb-0.5 ${completed ? 'text-slate-300' : 'text-slate-500'}`}>
+                                    {phase.shortLabel}
+                                </span>
+                                {dateVal && (
+                                    <span className="text-[8px] font-mono text-slate-400 bg-slate-800/50 px-1 rounded">
+                                        {format(new Date(dateVal), 'MMM d')}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Connector Arrow */}
+                        {i < phases.length - 1 && (
+                            <div className="flex items-center flex-1 min-w-[20px] -mt-6 mx-0.5">
+                                <div className={`h-0.5 w-full rounded-full transition-all duration-500 ${completed && !!procurement[phases[i + 1].dateField] ? colors.connector : 'bg-slate-700/50'}`} />
+                            </div>
+                        )}
+                    </React.Fragment>
+                );
+            })}
+        </div>
+    );
+};
 
 const VisualAllocation: React.FC = () => {
     // Data Context
@@ -31,7 +159,7 @@ const VisualAllocation: React.FC = () => {
     const sortedFolders = [...folders].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
     // View State
-    const [viewMode, setViewMode] = useState<'shelves' | 'cabinets' | 'folders' | 'files' | 'boxes' | 'box_files'>('shelves');
+    const [viewMode, setViewMode] = useState<'shelves' | 'cabinets' | 'folders' | 'files' | 'boxes' | 'box_folders'>('shelves');
     const [selectedShelfId, setSelectedShelfId] = useState<string | null>(null);
     const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null);
     const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
@@ -41,19 +169,30 @@ const VisualAllocation: React.FC = () => {
     // Filter Logic
     // Shelf (S1) -> Cabinet (C1): Cabinet.cabinetId === Shelf.id
     // Cabinet (C1) -> Folder (F1): Folder.shelfId === Cabinet.id
-    const getCabinetsForShelf = (shelfId: string) => cabinets.filter(c => c.cabinetId === shelfId); // FIXED: field is cabinetId
+    const getCabinetsForShelf = (shelfId: string) => cabinets.filter(c => c.cabinetId === shelfId);
     const getFoldersForCabinet = (cabinetId: string) => sortedFolders.filter(f => f.shelfId === cabinetId);
-    const getFilesForFolder = (folderId: string) => procurements.filter(p => p.folderId === folderId).sort((a, b) => (a.prNumber || '').localeCompare(b.prNumber || '', undefined, { numeric: true }));
-    const getFilesForBox = (boxId: string) => procurements.filter(p => p.boxId === boxId).sort((a, b) => (a.prNumber || '').localeCompare(b.prNumber || '', undefined, { numeric: true }));
+    // Box (B1) -> Folder (F1): Folder.boxId === Box.id
+    const getFoldersForBox = (boxId: string) => sortedFolders.filter(f => f.boxId === boxId);
+
+    const getFilesForFolder = (folderId: string) => procurements
+        .filter(p => p.folderId === folderId)
+        .sort((a, b) => {
+            // Sort by Stack Number Descending (Highest on top/first)
+            if (a.stackNumber && b.stackNumber) return b.stackNumber - a.stackNumber;
+            // Files with stack numbers come before files without
+            if (a.stackNumber) return -1;
+            if (b.stackNumber) return 1;
+            // Fallback to PR Number
+            return (a.prNumber || '').localeCompare(b.prNumber || '', undefined, { numeric: true });
+        });
+    // Legacy support or direct files in box (optional, but hierarchy is Box->Folder->File now)
+    const getFilesForBox = (boxId: string) => procurements.filter(p => p.boxId === boxId && !p.folderId).sort((a, b) => (a.prNumber || '').localeCompare(b.prNumber || '', undefined, { numeric: true }));
 
     // Helpers for Breadcrumbs
     const currentShelf = shelves.find(s => s.id === selectedShelfId);
     const currentCabinet = cabinets.find(c => c.id === selectedCabinetId);
     const currentFolder = folders.find(f => f.id === selectedFolderId);
     const currentBox = boxes.find(b => b.id === selectedBoxId);
-
-    // Box Helpers
-
 
     // Handlers
     const handleSelectShelf = (shelfId: string) => {
@@ -77,20 +216,25 @@ const VisualAllocation: React.FC = () => {
 
     const handleSelectBox = (boxId: string) => {
         setSelectedBoxId(boxId);
-        setViewMode('box_files');
+        setViewMode('box_folders');
     };
 
     const goBack = () => {
         if (viewMode === 'files') {
-            setViewMode('folders');
-            setSelectedFolderId(null);
+            if (selectedBoxId) {
+                setViewMode('box_folders');
+                setSelectedFolderId(null);
+            } else {
+                setViewMode('folders');
+                setSelectedFolderId(null);
+            }
         } else if (viewMode === 'folders') {
             setViewMode('cabinets');
             setSelectedCabinetId(null);
         } else if (viewMode === 'cabinets') {
             setViewMode('shelves');
             setSelectedShelfId(null);
-        } else if (viewMode === 'box_files') {
+        } else if (viewMode === 'box_folders') {
             setViewMode('boxes');
             setSelectedBoxId(null);
         }
@@ -100,7 +244,7 @@ const VisualAllocation: React.FC = () => {
         <div className="space-y-6 fade-in animate-in duration-500">
             {/* Header & Breadcrumbs */}
             <div className="flex items-center gap-2 text-sm text-slate-400 mb-4 font-mono">
-                <Button variant="ghost" className="p-0 h-auto hover:bg-transparent hover:text-white" onClick={() => { setViewMode('shelves'); setSelectedShelfId(null); setSelectedCabinetId(null); setSelectedFolderId(null); }}>
+                <Button variant="ghost" className="p-0 h-auto hover:bg-transparent hover:text-white" onClick={() => { setViewMode('shelves'); setSelectedShelfId(null); setSelectedCabinetId(null); setSelectedFolderId(null); setSelectedBoxId(null); }}>
                     STORAGE
                 </Button>
                 {selectedShelfId && (
@@ -119,24 +263,33 @@ const VisualAllocation: React.FC = () => {
                         </Button>
                     </>
                 )}
-                {selectedFolderId && (
+                {selectedFolderId && !selectedBoxId && (
                     <>
                         <ChevronRight className="h-4 w-4" />
                         <span className="text-white">{currentFolder?.code}</span>
                     </>
                 )}
                 {/* Box Breadcrumbs */}
-                {(viewMode === 'boxes' || viewMode === 'box_files') && (
-                    <Button variant="ghost" className="p-0 h-auto hover:bg-transparent hover:text-white" onClick={() => { setViewMode('boxes'); setSelectedBoxId(null); }}>
+                {(viewMode === 'boxes' || viewMode === 'box_folders' || (viewMode === 'files' && selectedBoxId)) && (
+                    <Button variant="ghost" className="p-0 h-auto hover:bg-transparent hover:text-white" onClick={() => { setViewMode('boxes'); setSelectedBoxId(null); setSelectedShelfId(null); setSelectedCabinetId(null); setSelectedFolderId(null); }}>
                         BOX STORAGE
                     </Button>
                 )}
                 {selectedBoxId && (
                     <>
                         <ChevronRight className="h-4 w-4" />
-                        <span className="text-white">{currentBox?.code}</span>
+                        <Button variant="ghost" className="p-0 h-auto hover:bg-transparent hover:text-white" onClick={() => { setViewMode('box_folders'); setSelectedFolderId(null); }}>
+                            {currentBox?.code}
+                        </Button>
+                        {selectedFolderId && (
+                            <>
+                                <ChevronRight className="h-4 w-4" />
+                                <span className="text-white">{currentFolder?.code}</span>
+                            </>
+                        )}
                     </>
                 )}
+                {/* Note: Files breadcrumb for Box mode handled by generic 'selectedFolderId' check above if we want, or we can explicit it here */}
             </div>
 
             <div className="flex items-center justify-between gap-4">
@@ -148,7 +301,7 @@ const VisualAllocation: React.FC = () => {
                         {viewMode === 'folders' && `Viewing Folders in Cabinet ${currentCabinet?.name}`}
                         {viewMode === 'files' && `Viewing Files in Folder ${currentFolder?.name}`}
                         {viewMode === 'boxes' && 'Select a Box to view its contents.'}
-                        {viewMode === 'box_files' && `Viewing Files in Box ${currentBox?.name}`}
+                        {viewMode === 'box_folders' && `Viewing Folders in Box ${currentBox?.name}`}
                     </p>
                 </div>
 
@@ -158,7 +311,7 @@ const VisualAllocation: React.FC = () => {
                         <Button
                             variant={viewMode === 'shelves' ? 'secondary' : 'ghost'}
                             size="sm"
-                            onClick={() => setViewMode('shelves')}
+                            onClick={() => { setViewMode('shelves'); setSelectedBoxId(null); }}
                             className={viewMode === 'shelves' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-slate-400 hover:text-white'}
                         >
                             <Grid className="h-4 w-4 mr-2" />
@@ -167,7 +320,7 @@ const VisualAllocation: React.FC = () => {
                         <Button
                             variant={viewMode === 'boxes' ? 'secondary' : 'ghost'}
                             size="sm"
-                            onClick={() => setViewMode('boxes')}
+                            onClick={() => { setViewMode('boxes'); setSelectedShelfId(null); setSelectedCabinetId(null); setSelectedFolderId(null); }}
                             className={viewMode === 'boxes' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-slate-400 hover:text-white'}
                         >
                             <Archive className="h-4 w-4 mr-2" />
@@ -361,13 +514,32 @@ const VisualAllocation: React.FC = () => {
                                             {box.code}
                                         </div>
                                         <span className="text-xs text-slate-400 font-mono">
-                                            {getFilesForBox(box.id).length} Files
+                                            {getFoldersForBox(box.id).length} Folders
                                         </span>
                                     </div>
 
                                     <div className="mt-12 pt-2">
                                         <h3 className="text-white font-bold text-lg mb-1 truncate">{box.name}</h3>
-                                        <p className="text-slate-400 text-sm line-clamp-2 min-h-[2.5em]">{box.description}</p>
+                                        <p className="text-slate-400 text-sm line-clamp-2 min-h-[2.5em] mb-2">{box.description}</p>
+
+                                        {/* Folders List inside Box */}
+                                        <div className="space-y-1 border-t border-slate-700/50 pt-2">
+                                            {getFoldersForBox(box.id).slice(0, 3).map(f => (
+                                                <div key={f.id} className="text-[10px] text-slate-500 flex items-center gap-1.5 truncate">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></div>
+                                                    <span className="font-mono text-blue-400/70">{f.code}</span>
+                                                    <span className="truncate">{f.name}</span>
+                                                </div>
+                                            ))}
+                                            {getFoldersForBox(box.id).length > 3 && (
+                                                <div className="text-[10px] text-slate-600 pl-3 italic">
+                                                    + {getFoldersForBox(box.id).length - 3} more folders
+                                                </div>
+                                            )}
+                                            {getFoldersForBox(box.id).length === 0 && (
+                                                <div className="text-[10px] text-slate-600 italic">No folders</div>
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div className="absolute bottom-3 right-3 opacity-10 group-hover:opacity-100 transition-opacity">
@@ -385,35 +557,41 @@ const VisualAllocation: React.FC = () => {
                     </div>
                 )}
 
-                {/* BOX FILES VIEW */}
-                {viewMode === 'box_files' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-in zoom-in-50 duration-300">
-                        {getFilesForBox(selectedBoxId!).map(file => (
+                {/* BOX FOLDERS VIEW (Tabs) */}
+                {viewMode === 'box_folders' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 animate-in zoom-in-50 duration-300">
+                        {getFoldersForBox(selectedBoxId!).map(folder => (
                             <div
-                                key={file.id}
-                                onClick={() => handleSelectFile(file)}
-                                className="bg-[#1e293b] border border-slate-700 p-0 rounded-sm cursor-pointer hover:border-blue-400 hover:-translate-y-1 transition-all group shadow-sm"
+                                key={folder.id}
+                                onClick={() => handleSelectFolder(folder.id)}
+                                className="group cursor-pointer relative mt-4"
                             >
-                                <div className="h-2 bg-blue-500/20 w-full" />
-                                <div className="p-4">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <FileText className="h-6 w-6 text-slate-500 group-hover:text-blue-400" />
-                                        <div className={`w-2 h-2 rounded-full ${file.status === 'active' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                                {/* Folder Tab */}
+                                <div
+                                    className="absolute -top-3 left-0 w-24 h-5 rounded-t-lg shadow-sm group-hover:-mt-1 transition-all"
+                                    style={{ backgroundColor: folder.color || '#fbbf24' }}
+                                />
+                                {/* Folder Body */}
+                                <div
+                                    className="bg-slate-800 border-t-4 p-4 rounded-b-lg rounded-tr-lg shadow-md h-32 flex flex-col justify-between hover:shadow-lg transition-all border-slate-700"
+                                    style={{ borderTopColor: folder.color || '#fbbf24' }}
+                                >
+                                    <div>
+                                        <h3 className="font-bold text-white truncate text-sm" title={folder.name}>{folder.name}</h3>
+                                        <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-1 rounded">{folder.code}</span>
                                     </div>
-                                    <h4 className="text-blue-400 font-mono text-xs font-bold mb-1">{file.prNumber}</h4>
-                                    <p className="text-slate-300 text-sm line-clamp-2 leading-tight h-10">{file.description}</p>
 
-                                    <div className="mt-4 pt-3 border-t border-slate-700 flex justify-between items-center text-xs text-slate-500">
-                                        <span>{format(new Date(file.dateAdded), 'MMM d')}</span>
-                                        <span className="font-mono">{file.division || '-'}</span>
+                                    <div className="flex justify-between items-end">
+                                        <FolderIcon className="h-8 w-8 text-slate-700" />
+                                        <span className="text-xs font-medium text-slate-300">{getFilesForFolder(folder.id).length} Files</span>
                                     </div>
                                 </div>
                             </div>
                         ))}
-                        {getFilesForBox(selectedBoxId!).length === 0 && (
+                        {getFoldersForBox(selectedBoxId!).length === 0 && (
                             <div className="col-span-full flex flex-col items-center justify-center text-slate-500 py-20">
-                                <FileText className="h-16 w-16 mb-4 opacity-20" />
-                                <p>No files in this box.</p>
+                                <FolderIcon className="h-16 w-16 mb-4 opacity-20" />
+                                <p>No folders in this box.</p>
                             </div>
                         )}
                     </div>
@@ -446,12 +624,18 @@ const VisualAllocation: React.FC = () => {
                                 </div>
                                 <div className="p-3 bg-slate-900 rounded-lg border border-slate-800">
                                     <h3 className="text-xs font-medium text-slate-500 mb-1 uppercase">Progress</h3>
-                                    <p className={`font-medium ${selectedFile.progressStatus === 'Success' ? 'text-emerald-400' :
-                                        selectedFile.progressStatus === 'Failed' ? 'text-red-400' :
+                                    <p className={`font-medium ${selectedFile.procurementStatus === 'Completed' ? 'text-emerald-400' :
+                                        (selectedFile.procurementStatus === 'Failure' || selectedFile.procurementStatus === 'Cancelled') ? 'text-red-400' :
                                             'text-yellow-400'
                                         }`}>
-                                        {selectedFile.progressStatus || 'Pending'}
+                                        {selectedFile.procurementStatus || 'Not yet Acted'}
                                     </p>
+                                </div>
+                                <div className="col-span-2 p-3 bg-slate-900 rounded-lg border border-slate-800">
+                                    <h3 className="text-xs font-medium text-slate-500 mb-2 uppercase">Procurement Progress</h3>
+                                    <div className="bg-slate-950/50 rounded-lg p-2 border border-slate-800/50">
+                                        <PhasePipeline procurement={selectedFile} />
+                                    </div>
                                 </div>
                                 <div className="p-3 bg-slate-900 rounded-lg border border-slate-800">
                                     <h3 className="text-xs font-medium text-slate-500 mb-1 uppercase">Division</h3>
@@ -522,30 +706,7 @@ const VisualAllocation: React.FC = () => {
                                 <div>
                                     <h3 className="text-sm font-medium text-slate-400 mb-2">Documents</h3>
                                     <div className="grid grid-cols-1 gap-1 text-xs text-slate-300 bg-slate-900 p-3 rounded-lg border border-slate-800 max-h-[150px] overflow-y-auto">
-                                        {[
-                                            { key: 'noticeToProceed', label: 'A. Notice to Proceed' },
-                                            { key: 'contractOfAgreement', label: 'B. Contract of Agreement' },
-                                            { key: 'noticeOfAward', label: 'C. Notice of Award' },
-                                            { key: 'bacResolutionAward', label: 'D. BAC Resolution to Award' },
-                                            { key: 'postQualReport', label: 'E. Post-Qual Report' },
-                                            { key: 'noticePostQual', label: 'F. Notice of Post-qualification' },
-                                            { key: 'bacResolutionPostQual', label: 'G. BAC Resolution to Post-qualify' },
-                                            { key: 'abstractBidsEvaluated', label: 'H. Abstract of Bids as Evaluated' },
-                                            { key: 'twgBidEvalReport', label: 'I. TWG Bid Evaluation Report' },
-                                            { key: 'minutesBidOpening', label: 'J. Minutes of Bid Opening' },
-                                            { key: 'resultEligibilityCheck', label: 'K. Eligibility Check Results' },
-                                            { key: 'biddersTechFinancialProposals', label: 'L. Bidders Technical and Financial Proposals' },
-                                            { key: 'minutesPreBid', label: 'M. Minutes of Pre-Bid Conference' },
-                                            { key: 'biddingDocuments', label: 'N. Bidding Documents' },
-                                            { key: 'inviteObservers', label: 'O.1. Letter Invitation to Observers' },
-                                            { key: 'officialReceipt', label: 'O.2. Official Receipt' },
-                                            { key: 'boardResolution', label: 'O.3. Board Resolution' },
-                                            { key: 'philgepsAwardNotice', label: 'O.4. PhilGEPS Award Notice Abstract' },
-                                            { key: 'philgepsPosting', label: 'P.1. PhilGEPS Posting' },
-                                            { key: 'websitePosting', label: 'P.2. Website Posting' },
-                                            { key: 'postingCertificate', label: 'P.3. Posting Certificate' },
-                                            { key: 'fundsAvailability', label: 'Q. CAF, PR, TOR & APP' },
-                                        ].map((item) => {
+                                        {CHECKLIST_ITEMS.map((item) => {
                                             if (selectedFile.checklist?.[item.key as keyof typeof selectedFile.checklist]) {
                                                 return (
                                                     <div key={item.key} className="flex items-center gap-2">

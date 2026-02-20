@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { db } from '@/lib/firebase';
+import { onUsersChange } from '@/lib/storage';
+import { ref, onValue } from 'firebase/database';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,9 +46,11 @@ import {
   Settings,
   Building2,
   Library,
-  Archive
+  Archive,
+  Activity
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 
 interface AppLayoutProps {
@@ -68,13 +73,22 @@ const navItems: NavItem[] = [
     label: 'Storages',
     icon: Library,
     children: [
-      { path: '/shelves', label: 'Shelves', icon: Layers },
+      { path: '/shelves', label: 'Drawers', icon: Layers },
       { path: '/cabinets', label: 'Cabinets', icon: Archive },
       { path: '/folders', label: 'Folders', icon: FolderOpen },
     ],
   },
-  { path: '/procurement/add', label: 'Add Procurement', icon: FilePlus },
-  { path: '/procurement/list', label: 'Records', icon: FileText },
+  {
+    label: 'Procurement',
+    icon: FileText,
+    children: [
+      { path: '/procurement/add', label: 'Add New', icon: FilePlus },
+      { path: '/procurement/list', label: 'All Records', icon: FileText },
+      { path: '/procurement/svp', label: 'Small Value Procurement', icon: FileText },
+      { path: '/procurement/regular', label: 'Regular Bidding', icon: FileText },
+      { path: '/procurement/progress', label: 'Progress Tracking', icon: Activity },
+    ]
+  },
   { path: '/visual-allocation', label: 'Visual Map', icon: Map },
   { path: '/divisions', label: 'Divisions', icon: Building2, adminOnly: true }, // Added Divisions
   { path: '/users', label: 'User Management', icon: Users, adminOnly: true },
@@ -85,8 +99,69 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Force logout if user is deleted or inactive
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = onUsersChange((users) => {
+      const currentUserData = users.find(u => u.id === user.id);
+
+      // If user not found OR status is not active
+      if (!currentUserData || currentUserData.status !== 'active') {
+        logout();
+        toast.error('Your account has been deactivated or deleted.');
+        navigate('/login');
+      }
+    });
+
+    return () => unsub();
+  }, [user, logout, navigate]);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [openDropdowns, setOpenDropdowns] = useState<string[]>(['Storages']); // Default open
+  const [isOnline, setIsOnline] = useState(true); // Default to true to avoid flash
+  const isFirstMount = React.useRef(true);
+
+  useEffect(() => {
+    const connectedRef = ref(db, ".info/connected");
+
+    // Check navigator.onLine as well for immediate feedback on hard disconnects
+    const updateStatus = (isConnected: boolean) => {
+      setIsOnline((prev) => {
+        if (prev === isConnected) return prev;
+
+        // Only toast if not the very first check (to avoid spam on load)
+        if (!isFirstMount.current) {
+          if (isConnected) {
+            toast.success('Network connection restored');
+          } else {
+            toast.error('Network connection lost');
+          }
+        }
+        return isConnected;
+      });
+
+      if (isFirstMount.current) {
+        isFirstMount.current = false;
+      }
+    };
+
+    const unsubscribe = onValue(connectedRef, (snap) => {
+      const firebaseConnected = !!snap.val();
+      updateStatus(firebaseConnected);
+    });
+
+    // Also listen to browser events for faster "Offline" detection
+    const handleOffline = () => updateStatus(false);
+    // We let Firebase handle the "Online" confirmation to ensure we can actually talk to DB
+
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -220,8 +295,22 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
       <div className="border-t border-border p-4">
         {!isCollapsed && (
           <div className="mb-3 px-3 overflow-hidden">
-            <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
+                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+              </div>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <div className={cn("h-2.5 w-2.5 rounded-full", isOnline ? "bg-emerald-500" : "bg-red-500")} />
+                  </TooltipTrigger>
+                  <TooltipContent className="bg-slate-800 text-white border-slate-700">
+                    {isOnline ? "Online" : "Offline"}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </div>
         )}
 
