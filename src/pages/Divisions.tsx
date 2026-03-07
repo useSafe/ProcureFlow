@@ -162,8 +162,7 @@ const Divisions: React.FC = () => {
                             <TableRow className="border-slate-800 hover:bg-transparent">
                                 <TableHead className="text-slate-300">Name</TableHead>
                                 <TableHead className="text-slate-300">PR Number Prefix (Abbr)</TableHead>
-                                <TableHead className="text-slate-300">End User</TableHead>
-                                <TableHead className="text-slate-300 text-center">Total Files</TableHead>
+                                <TableHead className="text-slate-300 text-center">Total Files(As End User)</TableHead>
                                 <TableHead className="text-slate-300">Created At</TableHead>
                                 <TableHead className="text-right text-slate-300">Actions</TableHead>
                             </TableRow>
@@ -186,9 +185,6 @@ const Divisions: React.FC = () => {
                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
                                                 {division.abbreviation}
                                             </span>
-                                        </TableCell>
-                                        <TableCell className="text-slate-300 text-sm">
-                                            {division.endUser || '-'}
                                         </TableCell>
                                         <TableCell className="text-slate-300 text-sm text-center font-mono">
                                             {procurements.filter(p => p.division === division.name).length}
@@ -242,16 +238,6 @@ const Divisions: React.FC = () => {
                                 className="bg-[#0f172a] border-slate-700"
                             />
                             <p className="text-xs text-slate-400">Used in PR Numbers (e.g. IT-0226-001)</p>
-                        </div>
-                        <div className="grid gap-2">
-                            <Label htmlFor="endUser">End User (Head)</Label>
-                            <Input
-                                id="endUser"
-                                value={formData.endUser}
-                                onChange={(e) => setFormData({ ...formData, endUser: e.target.value })}
-                                placeholder="e.g. John Doe"
-                                className="bg-[#0f172a] border-slate-700"
-                            />
                         </div>
                     </div>
                     <DialogFooter>

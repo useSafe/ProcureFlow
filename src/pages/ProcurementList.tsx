@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -51,7 +51,7 @@ import {
 } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { deleteProcurement, updateProcurement, onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange, onDivisionsChange, onBoxesChange } from '@/lib/storage';
+import { deleteProcurement, updateProcurement, addProcurement, onProcurementsChange, onCabinetsChange, onShelvesChange, onFoldersChange, onDivisionsChange, onBoxesChange, recalculateAllFolders } from '@/lib/storage';
 import { Procurement, Cabinet, Shelf, Folder, Box, ProcurementStatus, UrgencyLevel, ProcurementFilters, Division } from '@/types/procurement';
 import { format, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 import { DateRange } from 'react-day-picker';
@@ -85,8 +85,14 @@ import {
     Calendar as CalendarIcon,
     Package,
     Loader2,
-    Info
+    Info,
+    Upload,
+    CheckCircle2,
+    XCircle,
+    AlertCircle
 } from 'lucide-react';
+import { toast } from 'sonner';
+import type { ProcurementProcessStatus, ProcurementType } from '@/types/core';
 
 const MONTHS = [
     { value: 'JAN', label: 'Jan' },
@@ -105,10 +111,40 @@ const MONTHS = [
 
 const checklistItems = CHECKLIST_ITEMS;
 
-// ... imports ...
+const MonitoringDateField = ({ label, value, onChange, disabled, activeColor = 'blue' }: { label: string; value: string | undefined; onChange: (date: string | undefined) => void; disabled: boolean; activeColor?: 'blue' | 'purple' | 'emerald' }) => {
+    const activeClasses = {
+        blue: { border: 'border-blue-500/30', bg: 'bg-blue-900/10', text: 'text-blue-400', checkBg: 'data-[state=checked]:bg-blue-600', checkBorder: 'data-[state=checked]:border-blue-600', ring: 'focus:ring-blue-500' },
+        purple: { border: 'border-purple-500/30', bg: 'bg-purple-900/10', text: 'text-purple-400', checkBg: 'data-[state=checked]:bg-purple-600', checkBorder: 'data-[state=checked]:border-purple-600', ring: 'focus:ring-purple-500' },
+        emerald: { border: 'border-emerald-500/30', bg: 'bg-emerald-900/10', text: 'text-emerald-400', checkBg: 'data-[state=checked]:bg-emerald-600', checkBorder: 'data-[state=checked]:border-emerald-600', ring: 'focus:ring-emerald-500' }
+    }[activeColor] as any;
+
+    return (
+        <div className={`space-y-2 p-3 rounded-lg border transition-all ${disabled ? 'border-slate-800 bg-slate-900/30 opacity-50' : value ? `${activeClasses.border} ${activeClasses.bg}` : 'border-slate-700 bg-[#1e293b]/50'}`}>
+            <div className="flex items-center gap-2">
+                <Checkbox
+                    checked={!!value}
+                    onCheckedChange={(c) => onChange(c ? (value || format(new Date(), 'MM/dd/yyyy')) : undefined)}
+                    disabled={disabled}
+                    className={`h-4 w-4 border-slate-500 ${activeClasses.checkBg} ${activeClasses.checkBorder} disabled:opacity-50`}
+                />
+                <span className={`text-sm font-medium ${value ? activeClasses.text : disabled ? 'text-slate-600' : 'text-slate-300'}`}>{label}</span>
+            </div>
+            <div className="pl-6">
+                <input
+                    type="text"
+                    value={value || ''}
+                    placeholder="Progress/Date..."
+                    onChange={(e) => onChange(e.target.value || undefined)}
+                    disabled={disabled}
+                    className={`h-8 px-2 rounded-md bg-[#0f172a] border border-slate-700 text-slate-300 text-xs w-full outline-none ${activeClasses.ring} ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+                />
+            </div>
+        </div>
+    );
+};
 
 interface ProcurementListProps {
-    forcedType?: string; // 'Small Value Procurement(SVP)' | 'Regular Bidding' | etc.
+    forcedType?: string;
     pageTitle?: string;
 }
 
@@ -159,6 +195,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
         if (!procurement.rfqOpeningDate) return 'RFQ Opening';
         if (!procurement.bacResolutionDate) return 'BAC Resolution';
         if (!procurement.forwardedGsdDate) return 'Forwarded GSD for P.O.';
+        if (!procurement.poNtpForwardedGsdDate) return 'Add PO/NTP forwarded to GSD';
 
         return 'P.O. Created';
     };
@@ -204,6 +241,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
     // New: multi-select status filter state (empty = all)
 
     const [statusFilters, setStatusFilters] = useState<string[]>([]); // Procurement Status (Active/Archived)
+    const [procurementStatusFilters, setProcurementStatusFilters] = useState<string[]>([]);
 
     // Phase 6 Filters
     const [divisions, setDivisions] = useState<Division[]>([]);
@@ -213,35 +251,112 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
     // Export Modal State
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+
+    // Import State
+    const [isImporting, setIsImporting] = useState(false);
+    const [isImportResultOpen, setIsImportResultOpen] = useState(false);
+    const [importResults, setImportResults] = useState<{ imported: number; skipped: string[]; errors: string[] }>({ imported: 0, skipped: [], errors: [] });
+    const importFileRef = React.useRef<HTMLInputElement>(null);
+
+    // One-time automatic recalculation of stack numbers
+    useEffect(() => {
+        const runRecalc = async () => {
+            if (!localStorage.getItem('has_recalculated_stacks_v3')) {
+                try {
+                    await recalculateAllFolders();
+                    localStorage.setItem('has_recalculated_stacks_v3', 'true');
+                    toast.success('System: Successfully recalibrated all folder stack numbers.');
+                } catch (e) {
+                    console.error("Failed to batch recalculate", e);
+                }
+            }
+        };
+        runRecalc();
+    }, []);
+    // Automatically determined export format based on forcedType
+    const exportFormat = forcedType === 'SVP' ? 'svp' : forcedType === 'Regular Bidding' ? 'regular' : 'standard';
+
     const [exportFilters, setExportFilters] = useState<{
-        type: string[];
-        status: string[];
+        storageStatus: string;
         division: string;
-        dateRange: { from: Date | undefined; to: Date | undefined } | undefined;
+        year: string;
+        abcRange: { min: string; max: string };
+        bidAmountRange: { min: string; max: string };
+        storageLocation: string;
+        processStatus: string;
     }>({
-        type: [],
-        status: [],
-        division: 'all_divisions',
-        dateRange: undefined
+        storageStatus: 'all',
+        division: 'all',
+        year: 'all',
+        abcRange: { min: '', max: '' },
+        bidAmountRange: { min: '', max: '' },
+        storageLocation: 'all',
+        processStatus: 'all'
     });
+
+    // Compute Available Years for Export Dropdown
+    const availableExportYears = useMemo(() => {
+        const years = new Set<string>();
+        procurements.forEach(p => {
+            if (p.dateAdded) {
+                try {
+                    years.add(new Date(p.dateAdded).getFullYear().toString());
+                } catch (e) { }
+            }
+        });
+        return Array.from(years).sort().reverse();
+    }, [procurements]);
 
     // Edit Modal State for PR Number Split
     const [editDivisionId, setEditDivisionId] = useState('');
     const [editPrMonth, setEditPrMonth] = useState('');
     const [editPrYear, setEditPrYear] = useState('');
     const [editPrSequence, setEditPrSequence] = useState('');
+    const [editPrFormat, setEditPrFormat] = useState<'old' | 'new'>('old');
+    const [isCheckingEditPr, setIsCheckingEditPr] = useState(false);
+    const [editPrExists, setEditPrExists] = useState<boolean | null>(null);
 
     useEffect(() => {
         const unsub = onDivisionsChange(setDivisions);
         return () => unsub();
     }, []);
+
+    // Live validation for Edit PR Number
+    useEffect(() => {
+        if (!editingProcurement) {
+            setEditPrExists(null);
+            return;
+        }
+
+        const isPrComplete = editPrFormat === 'old'
+            ? !!(editDivisionId && editPrMonth && editPrYear && editPrSequence)
+            : !!(editPrMonth && editPrYear && editPrSequence);
+
+        if (!isPrComplete) {
+            setEditPrExists(null);
+            return;
+        }
+
+        const currentPrPreview = editPrFormat === 'old'
+            ? `${divisions.find(d => d.id === editDivisionId)?.abbreviation}-${editPrMonth}-${editPrYear.length === 4 ? editPrYear.slice(-2) : editPrYear}-${editPrSequence}`
+            : `${editPrYear}-${editPrMonth}-${editPrSequence}`;
+
+        setIsCheckingEditPr(true);
+        const timer = setTimeout(() => {
+            const exists = procurements.some(p => p.prNumber === currentPrPreview && p.id !== editingProcurement.id);
+            setEditPrExists(exists);
+            setIsCheckingEditPr(false);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [editPrFormat, editDivisionId, editPrMonth, editPrYear, editPrSequence, divisions, procurements, editingProcurement]);
     const [viewProcurement, setViewProcurement] = useState<Procurement | null>(null);
     const [isNonProcurement, setIsNonProcurement] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
     // Sorting state
     const [sortField, setSortField] = useState<'name' | 'prNumber' | 'date' | 'stackNumber'>('date');
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
     // Relocate Modal State
     const [isRelocateDialogOpen, setIsRelocateDialogOpen] = useState(false);
@@ -523,12 +638,16 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
     }, [filters.cabinetId, shelves]);
 
     useEffect(() => {
-        if (filters.shelfId) {
-            setFilterAvailableFolders(folders.filter(f => f.shelfId === filters.shelfId));
+        if (filters.boxId && filters.boxId !== 'all') {
+            // Box filter selected: show folders belonging to that box
+            setFilterAvailableFolders(folders.filter(f => f.boxId === filters.boxId));
+        } else if (filters.shelfId) {
+            // Shelf (cabinet) filter selected: show direct folders (no box)
+            setFilterAvailableFolders(folders.filter(f => f.shelfId === filters.shelfId && !f.boxId));
         } else {
             setFilterAvailableFolders([]);
         }
-    }, [filters.shelfId, folders]);
+    }, [filters.shelfId, filters.boxId, folders]);
 
     // build status options based on current procurements (fall back to common ones)
     // Filter options
@@ -552,6 +671,22 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
             return [...prev, type];
         });
     };
+
+    const toggleProcurementStatusFilter = (status: string) => {
+        setProcurementStatusFilters(prev => {
+            if (prev.includes(status)) return prev.filter(s => s !== status);
+            return [...prev, status];
+        });
+    };
+
+    const PROCESS_STATUS_OPTIONS = [
+        'Completed',
+        'In Progress',
+        'Failure',
+        'Returned PR to EU',
+        'Not yet Acted',
+        'Cancelled'
+    ] as const;
 
 
 
@@ -586,9 +721,12 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
             })
         );
 
+        // Process Status filter (multi-select, empty = all)
+        const matchesProcurementStatus = procurementStatusFilters.length === 0 || procurementStatusFilters.includes(procurement.procurementStatus || 'Not yet Acted');
+
         const matchesBox = !filters.boxId || procurement.boxId === filters.boxId;
 
-        return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesUrgency && matchesDivision && matchesType && matchesDate && matchesBox;
+        return matchesSearch && matchesCabinet && matchesShelf && matchesFolder && matchesStatus && matchesUrgency && matchesDivision && matchesType && matchesDate && matchesBox && matchesProcurementStatus;
     }).sort((a, b) => {
         let comparison = 0;
 
@@ -597,8 +735,8 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
         } else if (sortField === 'prNumber') {
             comparison = a.prNumber.localeCompare(b.prNumber);
         } else if (sortField === 'date') {
-            // Reverse comparison for date: newer dates first when ascending
-            comparison = new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime();
+            // Sort by exact system creation time for multi-user consistency
+            comparison = new Date(a.createdAt || a.dateAdded).getTime() - new Date(b.createdAt || b.dateAdded).getTime();
         } else if (sortField === 'stackNumber') {
             // Sort by stack number (files without stack numbers go to end)
             const aStack = a.stackNumber || 999;
@@ -640,13 +778,14 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
         });
         // clear multi-select status
         setStatusFilters([]);
+        setProcurementStatusFilters([]);
 
         setFilterDivision('all_divisions');
         setTypeFilters([]);
         setFilterDateRange(undefined);
         // reset sorting
         setSortField('date');
-        setSortDirection('asc');
+        setSortDirection('desc');
         setCurrentPage(1);
     };
 
@@ -654,19 +793,27 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
         setEditingProcurement(procurement);
         setIsEditDialogOpen(true);
 
-        // Parse PR Number for Edit Modal (Format: DIV-MMM-YY-SEQ)
+        // Parse PR Number for Edit Modal
         const parts = procurement.prNumber.split('-');
-        if (parts.length >= 4) {
+        // Detect format: Old = DIV-MMM-YY-SEQ (parts[0] is alpha abbrev), New = YYYY-MMM-SEQ
+        const isNewFormat = parts.length === 3 || /^\d{4}$/.test(parts[0]);
+        if (isNewFormat && parts.length >= 3) {
+            setEditPrFormat('new');
+            setEditPrYear(parts[0]);
+            setEditPrMonth(parts[1]);
+            setEditPrSequence(parts.slice(2).join('-'));
+            setEditDivisionId('');
+        } else if (!isNewFormat && parts.length >= 4) {
+            setEditPrFormat('old');
             const divAbbr = parts[0];
             const div = divisions.find(d => d.abbreviation === divAbbr);
             if (div) setEditDivisionId(div.id);
-            else setEditDivisionId(''); // Or handle unknown division
-
+            else setEditDivisionId('');
             setEditPrMonth(parts[1]);
             setEditPrYear(parts[2]);
             setEditPrSequence(parts[3]);
         } else {
-            // Reset if format doesn't match
+            setEditPrFormat('old');
             setEditDivisionId('');
             setEditPrMonth('');
             setEditPrYear('');
@@ -689,28 +836,56 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
         // Reconstruct PR Number from split fields
         let finalPrNumber = editingProcurement.prNumber;
-        if (editDivisionId && editPrMonth && editPrYear && editPrSequence) {
-            const div = divisions.find(d => d.id === editDivisionId);
-            if (div) {
-                finalPrNumber = `${div.abbreviation}-${editPrMonth}-${editPrYear}-${editPrSequence}`;
+        if (editPrFormat === 'new') {
+            if (editPrYear && editPrMonth && editPrSequence) {
+                finalPrNumber = `${editPrYear}-${editPrMonth}-${editPrSequence}`;
             }
+        } else {
+            if (editDivisionId && editPrMonth && editPrYear && editPrSequence) {
+                const div = divisions.find(d => d.id === editDivisionId);
+                if (div) {
+                    finalPrNumber = `${div.abbreviation}-${editPrMonth}-${editPrYear}-${editPrSequence}`;
+                }
+            }
+        }
+
+        // Check if the new PR number conflicts with an existing record (excluding self)
+        const duplicateExists = procurements.some(p => p.prNumber === finalPrNumber && p.id !== editingProcurement.id);
+        if (duplicateExists) {
+            toast.warning(`⚠️ PR Number "${finalPrNumber}" already exists on another record. Saving anyway...`);
         }
 
         const updatedProcurement: Procurement = {
             ...editingProcurement,
             prNumber: finalPrNumber,
-            // Ensure division name is updated if division ID changed (optional but good practice)
-            division: divisions.find(d => d.id === editDivisionId)?.name || editingProcurement.division,
+            // NOTE: division (End User) is already set on editingProcurement via the Edit modal's
+            // End User dropdown — do NOT overwrite it with editDivisionId (which is the PR Number's division).
             // Parse financials
             abc: editingProcurement.abc ? parseFloat(removeCommas(String(editingProcurement.abc))) : undefined,
             bidAmount: editingProcurement.bidAmount ? parseFloat(removeCommas(String(editingProcurement.bidAmount))) : undefined,
         };
 
+        // CRITICAL: Convert undefined monitoring fields to null so Firebase RTDB actually clears them.
+        // JSON.parse(JSON.stringify()) strips undefined values, leaving old DB values untouched.
+        // Setting to null explicitly tells Firebase to delete the field.
+        const monitoringFields: (keyof Procurement)[] = [
+            'receivedPrDate', 'prDeliberatedDate', 'publishedDate',
+            'rfqCanvassDate', 'rfqOpeningDate', 'bacResolutionDate',
+            'forwardedGsdDate', 'poNtpForwardedGsdDate',
+            'preBidDate', 'bidOpeningDate', 'bidEvaluationDate',
+            'postQualDate', 'postQualReportDate', 'forwardedOapiDate',
+            'noaDate', 'contractDate', 'ntpDate', 'awardedToDate',
+        ];
+        const savePayload: any = { ...updatedProcurement };
+        monitoringFields.forEach(field => {
+            if (savePayload[field] === undefined) savePayload[field] = null;
+        });
+
 
         try {
             await updateProcurement(
                 updatedProcurement.id,
-                updatedProcurement,
+                savePayload,
                 user?.email,
                 user?.name
             );
@@ -786,6 +961,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                 user?.email,
                 user?.name
             );
+            await updateStackNumbersForFolder(folderId);
             toast.success('Stack number updated');
             setIsRelocateDialogOpen(false);
             setRelocateProcurement(null);
@@ -830,15 +1006,30 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
     // Helper to get Latest Activity Date
     const getLatestActionDate = (p: Procurement) => {
-        const dates = [
+        const dateStrings = [
             p.receivedPrDate, p.prDeliberatedDate, p.publishedDate, p.preBidDate, p.bidOpeningDate,
             p.bidEvaluationDate, p.bacResolutionDate, p.postQualDate, p.postQualReportDate,
             p.forwardedOapiDate, p.noaDate, p.contractDate, p.ntpDate, p.forwardedGsdDate,
-            p.rfqCanvassDate, p.rfqOpeningDate, p.dateAdded, p.createdAt
-        ].filter(d => d).map(d => new Date(d!));
+            p.poNtpForwardedGsdDate, p.rfqCanvassDate, p.rfqOpeningDate, p.dateAdded, p.createdAt
+        ];
 
-        if (dates.length === 0) return null;
-        return new Date(Math.max.apply(null, dates.map(d => d.getTime())));
+        let maxTime = -Infinity;
+        let hasValidDate = false;
+
+        for (const ds of dateStrings) {
+            if (!ds) continue;
+            const d = new Date(ds);
+            if (!isNaN(d.getTime())) {
+                const t = d.getTime();
+                if (t > maxTime) {
+                    maxTime = t;
+                    hasValidDate = true;
+                }
+            }
+        }
+
+        if (!hasValidDate) return null;
+        return new Date(maxTime);
     };
 
     // Updated to show: Shelf-Cabinet-Folder (Legacy) OR Box-Folder (New)
@@ -868,41 +1059,184 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
     };
 
     const handleExportClick = () => {
-        // Initialize export filters with current view filters
+        // Initialize export filters defaults
         setExportFilters({
-            type: [...typeFilters],
-            status: [...statusFilters],
-            progress: [...procurementStatusFilters],
-            division: filterDivision,
-            dateRange: filterDateRange
+            storageStatus: 'all',
+            division: 'all',
+            year: 'all',
+            abcRange: { min: '', max: '' },
+            bidAmountRange: { min: '', max: '' },
+            storageLocation: 'all',
+            processStatus: 'all'
         });
         setIsExportModalOpen(true);
     };
 
+    const safeFormatDate = (val?: string, fmt = 'MMM d, yyyy'): string => {
+        if (!val) return '';
+        try {
+            const d = new Date(val);
+            if (isNaN(d.getTime())) return val; // return raw string if not parseable
+            return format(d, fmt);
+        } catch { return val; }
+    };
+
     const handleExportConfirm = () => {
-        // Filter procurements based on Export Modal state
+        // Filter procurements based on advanced Export Modal state
         const exportData = (procurements || []).filter(procurement => {
-            // Type Filter
-            const matchesType = exportFilters.type.length === 0 || exportFilters.type.includes(procurement.procurementType || '');
+            // Lock to current page's procurement type
+            const matchesType = !forcedType || procurement.procurementType === forcedType;
 
-            // Status Filter
-            const matchesStatus = exportFilters.status.length === 0 || exportFilters.status.includes(procurement.status);
+            // Storage Status
+            const matchesStorageStatus = exportFilters.storageStatus === 'all' ||
+                (exportFilters.storageStatus === 'borrowed' && procurement.status === 'active') ||
+                (exportFilters.storageStatus === 'archived' && procurement.status === 'archived');
 
-            // Progress Filter
-            const matchesProgress = exportFilters.progress.length === 0 || exportFilters.progress.includes(procurement.procurementStatus || 'Pending');
+            // End User Division
+            const matchesDivision = exportFilters.division === 'all' || procurement.division === exportFilters.division;
 
-            // Division Filter
-            const matchesDivision = !exportFilters.division || exportFilters.division === 'all_divisions' || procurement.division === exportFilters.division;
+            // Date (Year) match against dateAdded
+            const matchesYear = exportFilters.year === 'all' || (procurement.dateAdded && new Date(procurement.dateAdded).getFullYear().toString() === exportFilters.year);
 
-            // Date Range Filter
-            const matchesDate = !exportFilters.dateRange || !exportFilters.dateRange.from || (
-                new Date(procurement.dateAdded) >= exportFilters.dateRange.from &&
-                (!exportFilters.dateRange.to || new Date(procurement.dateAdded) <= new Date(exportFilters.dateRange.to.setHours(23, 59, 59, 999)))
-            );
+            // ABC Range
+            const minAbc = parseFloat(exportFilters.abcRange.min);
+            const maxAbc = parseFloat(exportFilters.abcRange.max);
+            const abc = procurement.abc || 0;
+            const matchesAbcRange = (!exportFilters.abcRange.min || abc >= minAbc) && (!exportFilters.abcRange.max || abc <= maxAbc);
 
-            return matchesType && matchesStatus && matchesProgress && matchesDivision && matchesDate;
+            // Bid Amount Range
+            const minBid = parseFloat(exportFilters.bidAmountRange.min);
+            const maxBid = parseFloat(exportFilters.bidAmountRange.max);
+            const bid = procurement.bidAmount || 0;
+            const matchesBidRange = (!exportFilters.bidAmountRange.min || bid >= minBid) && (!exportFilters.bidAmountRange.max || bid <= maxBid);
+
+            // Storage Location filter by type (All / Drawers only / Boxes only)
+            const isBox = !!procurement.boxId;
+            const matchesStorageLoc =
+                exportFilters.storageLocation === 'all' ||
+                (exportFilters.storageLocation === 'drawers' && !isBox) ||
+                (exportFilters.storageLocation === 'boxes' && isBox);
+
+            // Process Status
+            const matchesProcessStatus = exportFilters.processStatus === 'all' || procurement.procurementStatus === exportFilters.processStatus;
+
+            return matchesType && matchesStorageStatus && matchesDivision && matchesYear && matchesAbcRange && matchesBidRange && matchesStorageLoc && matchesProcessStatus;
         }).map(p => {
             const checklist = p.checklist || {};
+
+            if (exportFormat === 'svp') {
+                return {
+                    'Particulars/Project name': p.projectName || '',
+                    'PR Number': p.prNumber,
+                    'End User': p.division || '',
+                    'ABC': p.abc ? `₱${p.abc.toLocaleString()}` : '',
+                    'Status': p.status === 'active' ? 'Borrowed' : 'Archived',
+                    'Storage Location': getLocationString(p),
+                    'Stack Number': p.stackNumber || '',
+                    'Process Status': p.procurementStatus || 'Pending',
+                    'Borrowed by': p.borrowedBy || '',
+                    'Borrower Division': p.borrowerDivision || '',
+                    'Borrowed Date': safeFormatDate(p.borrowedDate),
+                    'Return by': p.returnedBy || '',
+                    'Return Date': safeFormatDate(p.returnDate),
+                    'Date of Current Status': safeFormatDate(p.dateStatusUpdated),
+                    'Remarks': p.description || '',
+                    'Received PR to Action(Date)': safeFormatDate(p.receivedPrDate),
+                    'PR Deliberated(Date)': safeFormatDate(p.prDeliberatedDate),
+                    'Published(Date)': safeFormatDate(p.publishedDate),
+                    'RFQ to Canvass(Date)': safeFormatDate(p.rfqCanvassDate),
+                    'RFQ Opening(Date)': safeFormatDate(p.rfqOpeningDate),
+                    'BAC Resolution(Date)': safeFormatDate(p.bacResolutionDate),
+                    'Forwarded to GSD for P.O(Date)': safeFormatDate(p.forwardedGsdDate),
+                    'PO/NTP Forwarded to GSD(Date)': safeFormatDate(p.poNtpForwardedGsdDate),
+                    'Staff in Charge': p.createdByName || '',
+                    'Supplier': p.supplier || '',
+                    'Bid Amount': p.bidAmount ? `₱${p.bidAmount.toLocaleString()}` : '',
+                    'Notes': p.notes || '',
+                    'A.': checklist.purchaseRequest ? 'Yes' : '',
+                    'B.': checklist.certificateOfFunds ? 'Yes' : '',
+                    'C.': checklist.publicationInvitation ? 'Yes' : '',
+                    'D.': checklist.minutesPreBid ? 'Yes' : '',
+                    'E.': checklist.biddingDocuments ? 'Yes' : '',
+                    'F.': checklist.supplementalBidBulletin ? 'Yes' : '',
+                    'G.': checklist.inviteObservers ? 'Yes' : '',
+                    'H.': checklist.biddersTechFinancialProposals ? 'Yes' : '',
+                    'I.': checklist.abstractBidsOpening ? 'Yes' : '',
+                    'J.': checklist.minutesBidOpening ? 'Yes' : '',
+                    'K.': checklist.postingCertification ? 'Yes' : '',
+                    'L.': checklist.twgBidEvalReport ? 'Yes' : '',
+                    'M.': checklist.abstractBidsEvaluated ? 'Yes' : '',
+                    'N.': checklist.bacResolutionPostQual ? 'Yes' : '',
+                    'O.': checklist.noticePostQual ? 'Yes' : '',
+                    'O.2.': checklist.officialReceipt ? 'Yes' : '',
+                    'O.4.': checklist.philgepsAwardNotice ? 'Yes' : '',
+                    'P.': checklist.endorsementWithBacRes ? 'Yes' : '',
+                    'Q.': checklist.endorsementForSignature ? 'Yes' : '',
+                    'R.': checklist.noticeOfAward ? 'Yes' : '',
+                    'S.': checklist.contractAgreement ? 'Yes' : '',
+                    'T.': checklist.noticeToProceed ? 'Yes' : '',
+                    'Date Added': safeFormatDate(p.dateAdded),
+                };
+            }
+            if (exportFormat === 'regular') {
+                return {
+                    'Particulars/Project name': p.projectName || '',
+                    'PR Number': p.prNumber,
+                    'End User': p.division || '',
+                    'ABC': p.abc ? `₱${p.abc.toLocaleString()}` : '',
+                    'Status': p.status === 'active' ? 'Borrowed' : 'Archived',
+                    'Storage Location': getLocationString(p),
+                    'Stack Number': p.stackNumber || '',
+                    'Process Status': p.procurementStatus || 'Pending',
+                    'Borrowed by': p.borrowedBy || '',
+                    'Borrower Division': p.borrowerDivision || '',
+                    'Borrowed Date': safeFormatDate(p.borrowedDate),
+                    'Return by': p.returnedBy || '',
+                    'Return Date': safeFormatDate(p.returnDate),
+                    'Date of Current Status': safeFormatDate(p.dateStatusUpdated),
+                    'Remarks': p.description || '',
+                    'Received PR to Action(Date)': safeFormatDate(p.receivedPrDate),
+                    'PR Deliberated(Date)': safeFormatDate(p.prDeliberatedDate),
+                    'Published(Date)': safeFormatDate(p.publishedDate),
+                    'Pre-Bid(Date)': safeFormatDate(p.preBidDate),
+                    'Bid Opening(Date)': safeFormatDate(p.bidOpeningDate),
+                    'Bid Evaluation Report(Date)': safeFormatDate(p.bidEvaluationDate),
+                    'Post Qualification(Date)': safeFormatDate(p.postQualDate),
+                    'Post Qualification Report(Date)': safeFormatDate(p.postQualReportDate),
+                    'Forwarded to OAPIA(Date)': safeFormatDate(p.forwardedOapiDate),
+                    'Notice of Award(Date)': safeFormatDate(p.noaDate),
+                    'Contract Date(Date)': safeFormatDate(p.contractDate),
+                    'Notice to Proceed(Date)': safeFormatDate(p.ntpDate),
+                    'Awarded to Supplier(Date)': safeFormatDate(p.awardedToDate),
+                    'Staff in Charge': p.createdByName || '',
+                    'Supplier': p.supplier || '',
+                    'Bid Amount': p.bidAmount ? `₱${p.bidAmount.toLocaleString()}` : '',
+                    'Notes': p.notes || '',
+                    'A.': checklist.purchaseRequest ? 'Yes' : '',
+                    'B.': checklist.certificateOfFunds ? 'Yes' : '',
+                    'C.': checklist.publicationInvitation ? 'Yes' : '',
+                    'D.': checklist.minutesPreBid ? 'Yes' : '',
+                    'E.': checklist.biddingDocuments ? 'Yes' : '',
+                    'F.': checklist.supplementalBidBulletin ? 'Yes' : '',
+                    'G.': checklist.inviteObservers ? 'Yes' : '',
+                    'H.': checklist.biddersTechFinancialProposals ? 'Yes' : '',
+                    'I.': checklist.abstractBidsOpening ? 'Yes' : '',
+                    'J.': checklist.minutesBidOpening ? 'Yes' : '',
+                    'K.': checklist.postingCertification ? 'Yes' : '',
+                    'L.': checklist.twgBidEvalReport ? 'Yes' : '',
+                    'M.': checklist.abstractBidsEvaluated ? 'Yes' : '',
+                    'N.': checklist.bacResolutionPostQual ? 'Yes' : '',
+                    'O.': checklist.noticePostQual ? 'Yes' : '',
+                    'O.2.': checklist.officialReceipt ? 'Yes' : '',
+                    'O.4.': checklist.philgepsAwardNotice ? 'Yes' : '',
+                    'P.': checklist.endorsementWithBacRes ? 'Yes' : '',
+                    'Q.': checklist.endorsementForSignature ? 'Yes' : '',
+                    'R.': checklist.noticeOfAward ? 'Yes' : '',
+                    'S.': checklist.contractAgreement ? 'Yes' : '',
+                    'T.': checklist.noticeToProceed ? 'Yes' : '',
+                    'Date Added': safeFormatDate(p.dateAdded),
+                };
+            }
 
             return {
                 'PR Number/IB Number': p.prNumber,
@@ -910,51 +1244,51 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                 'Project Name': p.projectName || '',
                 'Description': p.description,
                 'Division': p.division || '',
-                'Location': getLocationString(p),
                 'Status': p.status === 'active' ? 'Borrowed' : 'Archived',
-                'Progress Status': p.procurementStatus || 'Pending',
+                'Storage Location': getLocationString(p),
                 'Stack Number': p.stackNumber || '',
+                'Process Status': p.procurementStatus || 'Pending',
                 'Borrowed By': p.borrowedBy || '',
                 'Borrower Division': p.borrowerDivision || '',
-                'Borrowed Date': p.borrowedDate ? format(new Date(p.borrowedDate), 'MMM d, yyyy') : '',
+                'Borrowed Date': safeFormatDate(p.borrowedDate),
                 'Return By': p.returnedBy || '',
-                'Return Date': p.returnDate ? format(new Date(p.returnDate), 'MMM d, yyyy') : '',
-                'Procurement Date': p.procurementDate ? format(new Date(p.procurementDate), 'MMM d, yyyy') : '',
+                'Return Date': safeFormatDate(p.returnDate),
+                'Procurement Date': safeFormatDate(p.procurementDate),
                 'Tags': (p.tags || []).join(', '),
                 'Created By': p.createdByName || '',
-                'Created At': p.createdAt ? format(new Date(p.createdAt), 'MMM d, yyyy') : '',
+                'Created At': safeFormatDate(p.createdAt),
 
-                // Documents Handed Over (Checklist A-Q)
-                'A': checklist.noticeToProceed ? 'Yes' : '',
-                'B': checklist.contractOfAgreement ? 'Yes' : '',
-                'C': checklist.noticeOfAward ? 'Yes' : '',
-                'D': checklist.bacResolutionAward ? 'Yes' : '',
-                'E': checklist.postQualReport ? 'Yes' : '',
-                'F': checklist.noticePostQual ? 'Yes' : '',
-                'G': checklist.bacResolutionPostQual ? 'Yes' : '',
-                'H': checklist.abstractBidsEvaluated ? 'Yes' : '',
-                'I': checklist.twgBidEvalReport ? 'Yes' : '',
+                // Documents Handed Over (Checklist A-T)
+                'A': checklist.purchaseRequest ? 'Yes' : '',
+                'B': checklist.certificateOfFunds ? 'Yes' : '',
+                'C': checklist.publicationInvitation ? 'Yes' : '',
+                'D': checklist.minutesPreBid ? 'Yes' : '',
+                'E': checklist.biddingDocuments ? 'Yes' : '',
+                'F': checklist.supplementalBidBulletin ? 'Yes' : '',
+                'G': checklist.inviteObservers ? 'Yes' : '',
+                'H': checklist.biddersTechFinancialProposals ? 'Yes' : '',
+                'I': checklist.abstractBidsOpening ? 'Yes' : '',
                 'J': checklist.minutesBidOpening ? 'Yes' : '',
-                'K': checklist.resultEligibilityCheck ? 'Yes' : '',
-                'L': checklist.biddersTechFinancialProposals ? 'Yes' : '',
-                'M': checklist.minutesPreBid ? 'Yes' : '',
-                'N': checklist.biddingDocuments ? 'Yes' : '',
-                'O.1': checklist.inviteObservers ? 'Yes' : '',
+                'K': checklist.postingCertification ? 'Yes' : '',
+                'L': checklist.twgBidEvalReport ? 'Yes' : '',
+                'M': checklist.abstractBidsEvaluated ? 'Yes' : '',
+                'N': checklist.bacResolutionPostQual ? 'Yes' : '',
+                'O': checklist.noticePostQual ? 'Yes' : '',
                 'O.2': checklist.officialReceipt ? 'Yes' : '',
-                'O.3': checklist.boardResolution ? 'Yes' : '',
                 'O.4': checklist.philgepsAwardNotice ? 'Yes' : '',
-                'P.1': checklist.philgepsPosting ? 'Yes' : '',
-                'P.2': checklist.websitePosting ? 'Yes' : '',
-                'P.3': checklist.postingCertificate ? 'Yes' : '',
-                'Q': checklist.fundsAvailability ? 'Yes' : '',
+                'P': checklist.endorsementWithBacRes ? 'Yes' : '',
+                'Q': checklist.endorsementForSignature ? 'Yes' : '',
+                'R': checklist.noticeOfAward ? 'Yes' : '',
+                'S': checklist.contractAgreement ? 'Yes' : '',
+                'T': checklist.noticeToProceed ? 'Yes' : '',
 
-                'Date Added': format(new Date(p.dateAdded), 'MMM d, yyyy'),
+                'Date Added': safeFormatDate(p.dateAdded),
             };
         });
 
         const ws = XLSX.utils.json_to_sheet(exportData);
         const csv = XLSX.utils.sheet_to_csv(ws);
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `procurement_records_${format(new Date(), 'yyyy-MM-dd')}.csv`;
@@ -965,6 +1299,243 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
     };
 
 
+
+    const handleDownloadTemplate = (type: 'SVP' | 'Regular Bidding') => {
+        let templateData: any = {};
+        if (type === 'SVP') {
+            templateData = {
+                'Particulars/Project name': '', 'PR Number': '', 'End User': '', 'ABC': '', 'Status': '', 'Storage Location': '', 'Stack Number': '', 'Process Status': '', 'Borrowed by': '', 'Borrower Division': '', 'Borrowed Date': '', 'Return by': '', 'Return Date': '', 'Date of Current Status': '', 'Remarks': '', 'Received PR to Action(Date)': '', 'PR Deliberated(Date)': '', 'Published(Date)': '', 'RFQ to Canvass(Date)': '', 'RFQ Opening(Date)': '', 'BAC Resolution(Date)': '', 'Forwarded to GSD for P.O(Date)': '', 'PO/NTP Forwarded to GSD(Date)': '', 'Staff in Charge': '', 'Supplier': '', 'Bid Amount': '', 'A.': '', 'B.': '', 'C.': '', 'D.': '', 'E.': '', 'F.': '', 'G.': '', 'H.': '', 'I.': '', 'J.': '', 'K.': '', 'L.': '', 'M.': '', 'N.': '', 'O.': '', 'O.2.': '', 'O.4.': '', 'P.': '', 'Q.': '', 'R.': '', 'S.': '', 'T.': ''
+            };
+        } else {
+            templateData = {
+                'Particulars/Project name': '', 'PR Number': '', 'End User': '', 'ABC': '', 'Status': '', 'Storage Location': '', 'Stack Number': '', 'Process Status': '', 'Borrowed by': '', 'Borrower Division': '', 'Borrowed Date': '', 'Return by': '', 'Return Date': '', 'Date of Current Status': '', 'Remarks': '', 'Received PR to Action(Date)': '', 'PR Deliberated(Date)': '', 'Published(Date)': '', 'Pre-Bid(Date)': '', 'Bid Opening(Date)': '', 'Bid Evaluation Report(Date)': '', 'Post Qualification(Date)': '', 'Post Qualification Report(Date)': '', 'Forwarded to OAPIA(Date)': '', 'Notice of Award(Date)': '', 'Contract Date(Date)': '', 'Notice to Proceed(Date)': '', 'Awarded to Supplier(Date)': '', 'Staff in Charge': '', 'Supplier': '', 'Bid Amount': '', 'A.': '', 'B.': '', 'C.': '', 'D.': '', 'E.': '', 'F.': '', 'G.': '', 'H.': '', 'I.': '', 'J.': '', 'K.': '', 'L.': '', 'M.': '', 'N.': '', 'O.': '', 'O.2.': '', 'O.4.': '', 'P.': '', 'Q.': '', 'R.': '', 'S.': '', 'T.': ''
+            };
+        }
+
+        const ws = XLSX.utils.json_to_sheet([templateData]);
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `import_template_${type.replace(' ', '_').toLowerCase()}.csv`;
+        link.click();
+        toast.success(`Downloaded ${type} Import Template!`);
+    };
+
+    // ── CSV Import ────────────────────────────────────────────────────
+    const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        // Reset input so the same file can be re-selected
+        e.target.value = '';
+
+        setIsImporting(true);
+        const results = { imported: 0, skipped: [] as string[], errors: [] as string[] };
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const wb = XLSX.read(buffer, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+
+            if (rows.length === 0) {
+                toast.error('The CSV file is empty or unreadable.');
+                setIsImporting(false);
+                return;
+            }
+
+            // Existing PR numbers used for duplicate check
+            const existingPRs = new Set(procurements.map(p => p.prNumber.trim()));
+
+            // Helper: parse ₱-prefixed money string → number
+            const parseMoney = (v: string): number => {
+                if (!v) return 0;
+                const clean = String(v).replace(/[₱,\s]/g, '');
+                const n = parseFloat(clean);
+                return isNaN(n) ? 0 : n;
+            };
+
+            // Helper: parse date string → ISO string or undefined
+            const parseDate = (v: any): string | undefined => {
+                if (!v || String(v).trim() === '') return undefined;
+                // Try native Date parsing
+                const d = new Date(String(v));
+                if (!isNaN(d.getTime())) return d.toISOString();
+                return undefined;
+            };
+
+            // Helper: 'Yes' → true, else false
+            const yesNo = (v: any): boolean => String(v).toLowerCase().trim() === 'yes';
+
+            for (const row of rows) {
+                // Detect which export format by checking for known column names
+                const isSVP = 'Particulars/Project name' in row && 'RFQ to Canvass(Date)' in row;
+                const isRegular = 'Particulars/Project name' in row && 'Bid Opening(Date)' in row;
+                const isGeneral = 'PR Number/IB Number' in row;
+
+                // PR Number
+                const prNumber = String(row['PR Number'] || row['PR Number/IB Number'] || '').trim();
+                if (!prNumber) { results.errors.push('Row missing PR Number — skipped'); continue; }
+
+                if (existingPRs.has(prNumber)) {
+                    results.skipped.push(prNumber);
+                    continue;
+                }
+
+                try {
+                    // Status mapping
+                    const rawStatus = String(row['Status'] || '').trim().toLowerCase();
+                    const status: 'active' | 'archived' =
+                        rawStatus === 'borrowed' || rawStatus === 'active' ? 'active' : 'archived';
+
+                    // Checklist mapping (SVP/Regular: 'A.' key; General: 'A' key)
+                    const ck = (key: string) => yesNo(row[key] || row[key + '.'] || '');
+
+                    // Procurement type
+                    let procurementType: 'SVP' | 'Regular Bidding' | undefined;
+                    if (isSVP) procurementType = 'SVP';
+                    else if (isRegular) procurementType = 'Regular Bidding';
+                    else procurementType = (row['Procurement Type'] as any) || 'SVP';
+
+                    // Storage Location parsing back to IDs
+                    let boxId: string | undefined;
+                    let cabinetId: string | undefined;
+                    let shelfId: string | undefined;
+                    let folderId: string | undefined;
+
+                    const storageLocStr = String(row['Storage Location'] || row['Location'] || '').trim();
+                    if (storageLocStr && storageLocStr !== '-') {
+                        const parts = storageLocStr.split('-');
+                        if (parts.length === 2) {
+                            const b = boxes.find(x => x.code === parts[0]);
+                            const f = folders.find(x => x.code === parts[1]);
+                            if (b) boxId = b.id;
+                            if (f) folderId = f.id;
+                        } else if (parts.length === 3) {
+                            const c = cabinets.find(x => x.code === parts[0]);
+                            const s = shelves.find(x => x.code === parts[1]);
+                            const f = folders.find(x => x.code === parts[2]);
+                            if (c) cabinetId = c.id;
+                            if (s) shelfId = s.id;
+                            if (f) folderId = f.id;
+                        } else if (parts.length === 1) {
+                            const b = boxes.find(x => x.code === parts[0]);
+                            if (b) boxId = b.id;
+                        }
+                    }
+
+                    const procurement: any = {
+                        prNumber,
+                        procurementType,
+                        status,
+                        // Names / descriptions
+                        projectName: row['Particulars/Project name'] || row['Project Name'] || '',
+                        description: row['Remarks'] || row['Description'] || '',
+                        division: row['End User'] || row['Division'] || '',
+                        notes: row['Notes'] || '',
+                        supplier: row['Supplier'] || '',
+
+                        // Money
+                        abc: parseMoney(row['ABC']) || undefined,
+                        bidAmount: parseMoney(row['Bid Amount']) || undefined,
+
+                        // Borrow fields
+                        borrowedBy: row['Borrowed by'] || row['Borrowed By'] || '',
+                        borrowerDivision: row['Borrower Division'] || '',
+                        borrowedDate: parseDate(row['Borrowed Date']),
+                        returnedBy: row['Return by'] || row['Return By'] || '',
+                        returnDate: parseDate(row['Return Date']),
+                        dateStatusUpdated: parseDate(row['Date of Current Status']),
+
+                        // Process Status
+                        procurementStatus: (row['Process Status'] || row['Progress Status'] || 'Not yet Acted') as any,
+
+                        // Location IDs
+                        boxId,
+                        cabinetId,
+                        shelfId,
+                        folderId,
+
+                        // Stack / tags
+                        stackNumber: row['Stack Number'] ? parseInt(row['Stack Number']) : undefined,
+                        tags: row['Tags'] ? row['Tags'].split(',').map((t: string) => t.trim()).filter(Boolean) : [],
+
+                        // Monitoring — SVP dates
+                        receivedPrDate: parseDate(row['Received PR to Action(Date)']),
+                        prDeliberatedDate: parseDate(row['PR Deliberated(Date)']),
+                        publishedDate: parseDate(row['Published(Date)']),
+                        rfqCanvassDate: parseDate(row['RFQ to Canvass(Date)']),
+                        rfqOpeningDate: parseDate(row['RFQ Opening(Date)']),
+                        bacResolutionDate: parseDate(row['BAC Resolution(Date)']),
+                        forwardedGsdDate: parseDate(row['Forwarded to GSD for P.O(Date)']),
+                        poNtpForwardedGsdDate: parseDate(row['PO/NTP Forwarded to GSD(Date)']),
+
+                        // Monitoring — Regular Bidding dates
+                        preBidDate: parseDate(row['Pre-Bid(Date)']),
+                        bidOpeningDate: parseDate(row['Bid Opening(Date)']),
+                        bidEvaluationDate: parseDate(row['Bid Evaluation Report(Date)']),
+                        postQualDate: parseDate(row['Post Qualification(Date)']),
+                        postQualReportDate: parseDate(row['Post Qualification Report(Date)']),
+                        forwardedOapiDate: parseDate(row['Forwarded to OAPIA(Date)']),
+                        noaDate: parseDate(row['Notice of Award(Date)']),
+                        contractDate: parseDate(row['Contract Date(Date)']),
+                        ntpDate: parseDate(row['Notice to Proceed(Date)']),
+                        awardedToDate: parseDate(row['Awarded to Supplier(Date)']),
+
+                        // General export dates
+                        procurementDate: parseDate(row['Procurement Date']),
+                        dateAdded: parseDate(row['Date Added']) || new Date().toISOString(),
+
+                        // Checklist (try both 'A.' and 'A' formats)
+                        checklist: {
+                            purchaseRequest: ck('A'),
+                            certificateOfFunds: ck('B'),
+                            publicationInvitation: ck('C'),
+                            minutesPreBid: ck('D'),
+                            biddingDocuments: ck('E'),
+                            supplementalBidBulletin: ck('F'),
+                            inviteObservers: ck('G'),
+                            biddersTechFinancialProposals: ck('H'),
+                            abstractBidsOpening: ck('I'),
+                            minutesBidOpening: ck('J'),
+                            postingCertification: ck('K'),
+                            twgBidEvalReport: ck('L'),
+                            abstractBidsEvaluated: ck('M'),
+                            bacResolutionPostQual: ck('N'),
+                            noticePostQual: ck('O'),
+                            officialReceipt: ck('O.2') || ck('O.2.') || false,
+                            philgepsAwardNotice: ck('O.4') || ck('O.4.') || false,
+                            endorsementWithBacRes: ck('P'),
+                            endorsementForSignature: ck('Q'),
+                            noticeOfAward: ck('R'),
+                            contractAgreement: ck('S'),
+                            noticeToProceed: ck('T'),
+                        },
+                    };
+
+                    // Strip undefined values to keep Firebase clean
+                    Object.keys(procurement).forEach(k => procurement[k] === undefined && delete procurement[k]);
+
+                    await addProcurement(
+                        procurement,
+                        user?.email || 'import',
+                        user?.name || 'Import'
+                    );
+                    existingPRs.add(prNumber); // Prevent same-run duplicates
+                    results.imported++;
+                } catch (rowErr) {
+                    results.errors.push(`${prNumber}: ${(rowErr as Error).message}`);
+                }
+            }
+        } catch (err) {
+            toast.error('Failed to read CSV file.');
+            console.error(err);
+        }
+
+        setIsImporting(false);
+        setImportResults(results);
+        setIsImportResultOpen(true);
+    };
 
     const handleExportPDFSummary = () => {
         const doc = new jsPDF();
@@ -1115,15 +1686,59 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                         </AlertDialog>
                     )}
 
-                    <Button onClick={() => navigate('/procurement/add')} className="bg-blue-600 hover:bg-blue-700">
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add New Record
-                    </Button>
-                    {(typeFilters.includes('SVP') || typeFilters.includes('Regular Bidding')) && (
+                    {!['viewer', 'archiver'].includes(user?.role || '') && (
+                        <Button onClick={() => navigate('/procurement/add')} className="bg-blue-600 hover:bg-blue-700">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add New Record
+                        </Button>
+                    )}
+                    {(typeFilters.includes('SVP') || typeFilters.includes('Regular Bidding')) && !['viewer', 'archiver'].includes(user?.role || '') && (
                         <Button onClick={handleExportClick} className="bg-emerald-600 hover:bg-emerald-700">
                             <FileText className="mr-2 h-4 w-4" />
                             Export as CSV
                         </Button>
+                    )}
+                    {/* Import CSV (admin / bac-staff only) */}
+                    {!['viewer', 'archiver'].includes(user?.role || '') && (
+                        <>
+                            <input
+                                ref={importFileRef}
+                                type="file"
+                                accept=".csv,.xlsx,.xls"
+                                className="hidden"
+                                onChange={handleImportCSV}
+                            />
+                            <Button
+                                onClick={() => importFileRef.current?.click()}
+                                disabled={isImporting}
+                                className="bg-violet-600 hover:bg-violet-700"
+                            >
+                                {isImporting ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Upload className="mr-2 h-4 w-4" />
+                                )}
+                                {isImporting ? 'Importing…' : 'Import CSV'}
+                            </Button>
+
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="outline" className="border-slate-700 text-slate-300 hover:bg-slate-800">
+                                        <Download className="mr-2 h-4 w-4" />
+                                        Template
+                                        <ChevronDown className="ml-2 h-4 w-4" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent className="bg-[#1e293b] border-slate-700 text-white">
+                                    <DropdownMenuItem onClick={() => handleDownloadTemplate('SVP')} className="hover:bg-slate-800 cursor-pointer">
+                                        <Download className="mr-2 h-4 w-4" /> SVP Template
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleDownloadTemplate('Regular Bidding')} className="hover:bg-slate-800 cursor-pointer">
+                                        <Download className="mr-2 h-4 w-4" /> Regular Bidding Template
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </>
                     )}
                 </div>
             </div>
@@ -1290,6 +1905,47 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
 
 
+                            {/* Process Status Filter (Multi-select) */}
+                            <div className="flex-1 min-w-[140px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" className="w-full flex justify-between items-center text-white px-3 py-1 h-6 text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <span>Process Status</span>
+                                                {procurementStatusFilters.length > 0 && (
+                                                    <span className="inline-flex items-center justify-center h-5 px-1.5 rounded-full bg-blue-600 text-white text-[10px] font-medium">
+                                                        {procurementStatusFilters.length}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <ChevronDown className="h-4 w-4 opacity-50" />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="bg-[#1e293b] border-slate-700 text-white p-3 w-56">
+                                        <div className="mb-2 text-slate-300 text-sm">Select process status</div>
+                                        <div className="flex flex-col gap-2">
+                                            {PROCESS_STATUS_OPTIONS.map((status) => (
+                                                <div key={status} className="flex items-center gap-2">
+                                                    <Checkbox
+                                                        checked={procurementStatusFilters.includes(status)}
+                                                        onCheckedChange={() => toggleProcurementStatusFilter(status)}
+                                                        className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleProcurementStatusFilter(status)}
+                                                        className="text-sm text-slate-200 text-left w-full"
+                                                    >
+                                                        {status}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+
+
                             {/* Division Filter */}
                             <div className="flex-1 min-w-[150px] bg-[#1e293b] rounded-md border border-slate-700 p-1">
                                 <Select
@@ -1392,11 +2048,13 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                             <TableHeader>
                                 <TableRow className="border-slate-800 hover:bg-transparent">
                                     <TableHead className="w-[50px]">
-                                        <Checkbox
-                                            checked={paginatedProcurements.length > 0 && paginatedProcurements.every(p => selectedIds.includes(p.id))}
-                                            onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
-                                            className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-                                        />
+                                        {!['viewer', 'archiver'].includes(user?.role || '') && (
+                                            <Checkbox
+                                                checked={paginatedProcurements.length > 0 && paginatedProcurements.every(p => selectedIds.includes(p.id))}
+                                                onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                                                className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                            />
+                                        )}
                                     </TableHead>
                                     <TableHead className="text-slate-300 w-[100px]">{forcedType === 'Regular Bidding' ? 'IB Number' : 'PR Number'}</TableHead>
                                     <TableHead className="text-slate-300">Project Title (Particulars)</TableHead>
@@ -1405,6 +2063,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                     {!forcedType && <TableHead className="text-slate-300 w-[100px]">Type</TableHead>}
                                     <TableHead className="text-slate-300 w-[100px]">Location</TableHead>
                                     <TableHead className="text-center text-slate-300 w-[70px]">Stack #</TableHead>
+                                    {/* <TableHead className="text-slate-300 w-[100px]">Urgency / Deadline</TableHead> */}
                                     <TableHead className="text-slate-300 w-[120px]">Current Progress</TableHead>
                                     <TableHead className="text-slate-300 w-[110px]">Status</TableHead>
                                     <TableHead className="text-slate-300 w-[120px]">Date Progress Updated</TableHead>
@@ -1442,7 +2101,6 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                 if (p.noaDate) return 'NOA';
                                                 if (p.postQualReportDate) return 'Post-Qual Report';
                                                 if (p.postQualDate) return 'Post-Qual';
-                                                if (p.bacResolutionDate) return 'BAC Resolution';
                                                 if (p.bidEvaluationDate) return 'Bid Eval Report';
                                                 if (p.bidOpeningDate) return 'Bid Opening';
                                                 if (p.preBidDate) return 'Pre-bid';
@@ -1455,35 +2113,8 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                         const currentStage = getLastStage(procurement);
 
                                         // Determine Effective Status for Coloring
-                                        // User logic: "Completed(Green), In Progress(Blue), Returned PR to EU(Purple), Not yet Acted(Gray), Failure(Red), Cancelled(Red Orange)"
+                                        // User logic: "Completed(Green), In Progress(Yellow), Returned PR to EU(Purple), Not yet Acted(Gray), Failure(Red), Cancelled(Red Orange)"
                                         let effectiveStatus = pStatus || 'Not yet Acted';
-
-                                        // Auto-detect 'In Progress' if marked 'Not yet Acted' but has updates
-                                        if (effectiveStatus === 'Not yet Acted') {
-                                            // Check if any progress monitoring dates are set
-                                            const hasProgress = [
-                                                procurement.receivedPrDate,
-                                                procurement.prDeliberatedDate,
-                                                procurement.publishedDate,
-                                                procurement.preBidDate,
-                                                procurement.bidOpeningDate,
-                                                procurement.bidEvaluationDate,
-                                                procurement.bacResolutionDate,
-                                                procurement.postQualDate,
-                                                procurement.postQualReportDate,
-                                                procurement.forwardedOapiDate,
-                                                procurement.noaDate,
-                                                procurement.contractDate,
-                                                procurement.ntpDate,
-                                                procurement.rfqCanvassDate,
-                                                procurement.rfqOpeningDate,
-                                                procurement.forwardedGsdDate
-                                            ].some(d => !!d);
-
-                                            if (hasProgress) {
-                                                effectiveStatus = 'In Progress';
-                                            }
-                                        }
 
                                         // If status is Pending (legacy), treat as In Progress
                                         if (pStatus === 'Pending') effectiveStatus = 'In Progress';
@@ -1538,11 +2169,13 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                         return (
                                             <TableRow key={procurement.id} className={`border-slate-800 transition-colors ${bgClass}`}>
                                                 <TableCell className={`${borderClass}`}>
-                                                    <Checkbox
-                                                        checked={selectedIds.includes(procurement.id)}
-                                                        onCheckedChange={(checked) => handleSelectOne(procurement.id, checked as boolean)}
-                                                        className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-                                                    />
+                                                    {!['viewer', 'archiver'].includes(user?.role || '') && (
+                                                        <Checkbox
+                                                            checked={selectedIds.includes(procurement.id)}
+                                                            onCheckedChange={(checked) => handleSelectOne(procurement.id, checked as boolean)}
+                                                            className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+                                                        />
+                                                    )}
                                                 </TableCell>
                                                 <TableCell className="font-medium text-white text-xs w-[140px]">
                                                     {procurement.prNumber}
@@ -1588,6 +2221,23 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                         {procurement.stackNumber ? `${procurement.stackNumber}` : '-'}
                                                     </span>
                                                 </TableCell>
+                                                {/* <TableCell>
+                                                    <div className="flex flex-col gap-1">
+                                                        <span className={`inline-flex w-max items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${procurement.urgencyLevel === 'Critical' ? 'bg-red-500/10 text-red-500 border-red-500/20' :
+                                                                procurement.urgencyLevel === 'High' ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' :
+                                                                    procurement.urgencyLevel === 'Low' ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
+                                                                        'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                                            }`}>
+                                                            {procurement.urgencyLevel || 'Medium'}
+                                                        </span>
+                                                        {procurement.deadline && (
+                                                            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                                                                <CalendarIcon className="w-3 h-3 inline mr-1" />
+                                                                {format(new Date(procurement.deadline), 'MMM d, yyyy')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </TableCell> */}
                                                 <TableCell className="text-xs font-medium">
                                                     {/* "Current Progress" shows the NEXT stage/step */}
                                                     <span className={`${textStatusClass}`} title={`Status: ${effectiveStatus}`}>
@@ -1598,6 +2248,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                     <Select
                                                         value={procurement.status}
                                                         onValueChange={(value) => handleStatusChange(procurement, value as ProcurementStatus)}
+                                                        disabled={['viewer', 'archiver'].includes(user?.role || '')}
                                                     >
                                                         <SelectTrigger className={`w-[110px] h-7 text-xs border ${procurement.status === 'active'
                                                             ? 'bg-orange-500/10 text-orange-400 border-orange-500/20'
@@ -1621,17 +2272,18 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="flex justify-end gap-2">
-                                                        {/* {isFolderView && (
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            onClick={() => handleRelocateClick(procurement)}
-                                                            className="h-8 w-8 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
-                                                            title="Relocate / Reorder"
-                                                        >
-                                                            <ArrowUp className="h-4 w-4" />
-                                                        </Button>
-                                                    )} */}
+                                                        {/* Reorder Stack Number button */}
+                                                        {procurement.folderId && !['viewer', 'archiver'].includes(user?.role || '') && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                onClick={() => handleRelocateClick(procurement)}
+                                                                className="h-8 w-8 text-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10"
+                                                                title="Reorder Stack Number"
+                                                            >
+                                                                <ArrowUp className="h-4 w-4" />
+                                                            </Button>
+                                                        )}
                                                         <Button
                                                             variant="ghost"
                                                             size="icon"
@@ -1650,39 +2302,43 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                         >
                                                             <Eye className="h-4 w-4" />
                                                         </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            onClick={() => handleEdit(procurement)}
-                                                            className="h-8 w-8 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
-                                                            title="Edit Details"
-                                                        >
-                                                            <Pencil className="h-4 w-4" />
-                                                        </Button>
-                                                        <AlertDialog>
-                                                            <AlertDialogTrigger asChild>
+                                                        {!['viewer', 'archiver'].includes(user?.role || '') && (
+                                                            <>
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    onClick={() => setDeleteId(procurement.id)}
-                                                                    className="h-8 w-8 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                                                                    onClick={() => handleEdit(procurement)}
+                                                                    className="h-8 w-8 text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"
+                                                                    title="Edit Details"
                                                                 >
-                                                                    <Trash2 className="h-4 w-4" />
+                                                                    <Pencil className="h-4 w-4" />
                                                                 </Button>
-                                                            </AlertDialogTrigger>
-                                                            <AlertDialogContent className="bg-[#1e293b] border-slate-800 text-white">
-                                                                <AlertDialogHeader>
-                                                                    <AlertDialogTitle>Delete Record?</AlertDialogTitle>
-                                                                    <AlertDialogDescription className="text-slate-400">
-                                                                        This action cannot be undone. This will permanently delete the procurement record.
-                                                                    </AlertDialogDescription>
-                                                                </AlertDialogHeader>
-                                                                <AlertDialogFooter>
-                                                                    <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
-                                                                    <AlertDialogAction onClick={handleDeleteConfirm} className="bg-red-600 hover:bg-red-700 text-white">Delete</AlertDialogAction>
-                                                                </AlertDialogFooter>
-                                                            </AlertDialogContent>
-                                                        </AlertDialog>
+                                                                <AlertDialog>
+                                                                    <AlertDialogTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            onClick={() => setDeleteId(procurement.id)}
+                                                                            className="h-8 w-8 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                                                                        >
+                                                                            <Trash2 className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </AlertDialogTrigger>
+                                                                    <AlertDialogContent className="bg-[#1e293b] border-slate-800 text-white">
+                                                                        <AlertDialogHeader>
+                                                                            <AlertDialogTitle>Delete Record?</AlertDialogTitle>
+                                                                            <AlertDialogDescription className="text-slate-400">
+                                                                                This action cannot be undone. This will permanently delete the procurement record.
+                                                                            </AlertDialogDescription>
+                                                                        </AlertDialogHeader>
+                                                                        <AlertDialogFooter>
+                                                                            <AlertDialogCancel className="bg-transparent border-slate-700 text-white hover:bg-slate-800">Cancel</AlertDialogCancel>
+                                                                            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-red-600 hover:bg-red-700 text-white">Delete</AlertDialogAction>
+                                                                        </AlertDialogFooter>
+                                                                    </AlertDialogContent>
+                                                                </AlertDialog>
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
@@ -1714,7 +2370,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                         <span className="text-xs text-slate-300">Completed</span>
                                     </div>
                                     <div className="flex items-center gap-2.5">
-                                        <div className="w-3 h-3 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                                        <div className="w-3 h-3 rounded-full bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.5)]"></div>
                                         <span className="text-xs text-slate-300">In Progress</span>
                                     </div>
                                     <div className="flex items-center gap-2.5">
@@ -1742,7 +2398,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                     <div className="p-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div className="text-sm text-slate-400">
                             Showing {paginatedProcurements.length} of {filteredProcurements.length} records
-                            <span className="mx-2">â€¢</span>
+                            <span className="mx-2">•</span>
                             Page {currentPage} of {totalPages}
                         </div>
 
@@ -1813,21 +2469,41 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                     <div className="space-y-2 col-span-2">
                                         {!['Attendance Sheets', 'Others'].includes(editingProcurement.procurementType || '') && (
                                             <>
-                                                <Label className="text-slate-300">PR Number Construction</Label>
-                                                <div className="grid grid-cols-4 gap-2 items-end p-3 rounded-lg bg-[#1e293b]/50 border border-slate-700/50">
-                                                    <div className="space-y-1">
-                                                        <Label className="text-xs text-slate-400">Division</Label>
-                                                        <Select value={editDivisionId} onValueChange={setEditDivisionId}>
-                                                            <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
-                                                                <SelectValue placeholder="Div" />
-                                                            </SelectTrigger>
-                                                            <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
-                                                                {divisions.map(div => (
-                                                                    <SelectItem key={div.id} value={div.id}>{div.abbreviation}</SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <Label className="text-slate-300">PR Number Construction</Label>
+                                                    <div className="flex bg-[#1e293b] p-1 rounded-lg border border-slate-700 text-xs">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEditPrFormat('old')}
+                                                            className={`px-3 py-1 rounded-md font-medium transition-all ${editPrFormat === 'old' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                                                        >
+                                                            Old (Div-Mon-Yr-#)
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEditPrFormat('new')}
+                                                            className={`px-3 py-1 rounded-md font-medium transition-all ${editPrFormat === 'new' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                                                        >
+                                                            New (Yr-Mon-#)
+                                                        </button>
                                                     </div>
+                                                </div>
+                                                <div className={`grid gap-2 items-end p-3 rounded-lg bg-[#1e293b]/50 border border-slate-700/50 ${editPrFormat === 'old' ? 'grid-cols-4' : 'grid-cols-3'}`}>
+                                                    {editPrFormat === 'old' && (
+                                                        <div className="space-y-1">
+                                                            <Label className="text-xs text-slate-400">Division</Label>
+                                                            <Select value={editDivisionId} onValueChange={setEditDivisionId}>
+                                                                <SelectTrigger className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs">
+                                                                    <SelectValue placeholder="Div" />
+                                                                </SelectTrigger>
+                                                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
+                                                                    {divisions.map(div => (
+                                                                        <SelectItem key={div.id} value={div.id}>{div.abbreviation}</SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                    )}
                                                     <div className="space-y-1">
                                                         <Label className="text-xs text-slate-400">Month</Label>
                                                         <Select value={editPrMonth} onValueChange={setEditPrMonth}>
@@ -1847,7 +2523,7 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                             value={editPrYear}
                                                             onChange={(e) => setEditPrYear(e.target.value)}
                                                             className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
-                                                            maxLength={2}
+                                                            maxLength={4}
                                                         />
                                                     </div>
                                                     <div className="space-y-1">
@@ -1856,12 +2532,34 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                             value={editPrSequence}
                                                             onChange={(e) => setEditPrSequence(e.target.value)}
                                                             className="bg-[#1e293b] border-slate-700 text-white h-8 text-xs"
-                                                            maxLength={3}
+                                                            maxLength={7}
                                                         />
                                                     </div>
                                                 </div>
-                                                <div className="mt-1 text-xs text-slate-500 text-right">
-                                                    Current: <span className="font-mono text-emerald-500">{editingProcurement.prNumber}</span>
+                                                <div className="mt-1 text-xs text-slate-500 flex flex-col gap-1">
+                                                    <div className="flex justify-between items-center">
+                                                        <span>Preview: <span className="font-mono text-emerald-400 font-bold ml-1">
+                                                            {editPrFormat === 'old'
+                                                                ? (editDivisionId && divisions.find(d => d.id === editDivisionId)
+                                                                    ? `${divisions.find(d => d.id === editDivisionId)?.abbreviation}-${editPrMonth}-${editPrYear.length === 4 ? editPrYear.slice(-2) : editPrYear}-${editPrSequence}`
+                                                                    : 'XXX-XXX-XX-XXX')
+                                                                : (editPrYear && editPrMonth && editPrSequence ? `${editPrYear}-${editPrMonth}-${editPrSequence}` : 'XXXX-XXX-XXXX')
+                                                            }
+                                                        </span></span>
+                                                        <span>Current: <span className="font-mono text-emerald-500">{editingProcurement.prNumber}</span></span>
+                                                    </div>
+                                                    <div className="flex justify-start">
+                                                        {isCheckingEditPr ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                                                                <span className="text-[10px] text-slate-400 italic">Validating ID...</span>
+                                                            </div>
+                                                        ) : (editPrExists !== null && (
+                                                            editPrExists
+                                                                ? <span className="text-[10px] text-red-500 font-bold bg-red-500/10 px-1.5 py-0.5 rounded animate-pulse">PR Existed</span>
+                                                                : <span className="text-[10px] text-emerald-500 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">PR still not on Records</span>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             </>
                                         )}
@@ -2023,182 +2721,112 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
                             {/* Monitoring Process (Standard Grid) */}
                             <div className="bg-[#0f172a] p-4 rounded-lg border border-slate-800 border-l-4 border-l-blue-500 space-y-4  mt-4 mb-4 shadow-sm min-h-[100px]">
-                                <div className="border-b border-slate-800 pb-2">
-                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                        <CalendarIcon className="h-4 w-4 text-blue-500" />
-                                        Monitoring Process
-                                    </h3>
-                                    <p className="text-xs text-slate-400">Update key dates. Use checkboxes to enable/disable steps.</p>
+                                <div className="border-b border-slate-800 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                            <CalendarIcon className="h-4 w-4 text-blue-500" />
+                                            Monitoring Process
+                                        </h3>
+                                        <p className="text-xs text-slate-400">Update key dates. Use checkboxes to enable/disable steps.</p>
+                                    </div>
+                                    <div className="flex gap-2 shrink-0">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700"
+                                            onClick={() => {
+                                                const today = format(new Date(), 'MM/dd/yyyy');
+                                                const isRegular = editingProcurement?.procurementType === 'Regular Bidding';
+                                                setEditingProcurement(prev => ({
+                                                    ...prev!,
+                                                    receivedPrDate: today,
+                                                    prDeliberatedDate: today,
+                                                    publishedDate: today,
+                                                    ...(isRegular ? {
+                                                        preBidDate: today,
+                                                        bidOpeningDate: today,
+                                                        bidEvaluationDate: today,
+                                                        bacResolutionDate: today,
+                                                        postQualDate: today,
+                                                        postQualReportDate: today,
+                                                        forwardedOapiDate: today,
+                                                        noaDate: today,
+                                                        contractDate: today,
+                                                        ntpDate: today,
+                                                        awardedToDate: today,
+                                                    } : {
+                                                        rfqCanvassDate: today,
+                                                        rfqOpeningDate: today,
+                                                        bacResolutionDate: today,
+                                                        forwardedGsdDate: today,
+                                                        poNtpForwardedGsdDate: today,
+                                                    })
+                                                }));
+                                            }}
+                                        >
+                                            Check All
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="text-[10px] h-6 px-2 bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700"
+                                            onClick={() => {
+                                                setEditingProcurement(prev => ({
+                                                    ...prev!,
+                                                    receivedPrDate: undefined,
+                                                    prDeliberatedDate: undefined,
+                                                    publishedDate: undefined,
+                                                    preBidDate: undefined,
+                                                    bidOpeningDate: undefined,
+                                                    bidEvaluationDate: undefined,
+                                                    bacResolutionDate: undefined,
+                                                    postQualDate: undefined,
+                                                    postQualReportDate: undefined,
+                                                    forwardedOapiDate: undefined,
+                                                    noaDate: undefined,
+                                                    contractDate: undefined,
+                                                    ntpDate: undefined,
+                                                    awardedToDate: undefined,
+                                                    rfqCanvassDate: undefined,
+                                                    rfqOpeningDate: undefined,
+                                                    forwardedGsdDate: undefined,
+                                                    poNtpForwardedGsdDate: undefined,
+                                                }));
+                                            }}
+                                        >
+                                            Uncheck All
+                                        </Button>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-4">
                                     {/* Pre-Procurement */}
                                     <div className="space-y-2">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="h-8 w-1 bg-blue-500 rounded-full"></div>
-                                            <h4 className="text-sm font-semibold text-blue-400 uppercase tracking-wider">Pre-Procurement</h4>
-                                        </div>
                                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                            <div className="space-y-1">
-                                                <div className="flex items-center justify-between">
-                                                    <Label className="text-xs text-slate-300">Received PR</Label>
-                                                    <Checkbox
-                                                        checked={!!editingProcurement.receivedPrDate}
-                                                        onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, receivedPrDate: checked ? (editingProcurement.receivedPrDate || new Date().toISOString()) : undefined })}
-                                                        className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-                                                    />
-                                                </div>
-                                                <Input
-                                                    type="date"
-                                                    value={editingProcurement.receivedPrDate ? format(new Date(editingProcurement.receivedPrDate), 'yyyy-MM-dd') : ''}
-                                                    onChange={(e) => setEditingProcurement({ ...editingProcurement, receivedPrDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                    disabled={false}
-                                                    className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.receivedPrDate ? 'opacity-50' : ''}`}
-                                                />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <div className="flex items-center justify-between">
-                                                    <Label className={`text-xs ${!editingProcurement.receivedPrDate ? 'text-slate-600' : 'text-slate-300'}`}>PR Deliberated</Label>
-                                                    <Checkbox
-                                                        checked={!!editingProcurement.prDeliberatedDate}
-                                                        onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, prDeliberatedDate: checked ? (editingProcurement.prDeliberatedDate || new Date().toISOString()) : undefined })}
-                                                        disabled={!editingProcurement.receivedPrDate}
-                                                        className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                    />
-                                                </div>
-                                                <Input
-                                                    type="date"
-                                                    value={editingProcurement.prDeliberatedDate ? format(new Date(editingProcurement.prDeliberatedDate), 'yyyy-MM-dd') : ''}
-                                                    onChange={(e) => setEditingProcurement({ ...editingProcurement, prDeliberatedDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                    disabled={!editingProcurement.receivedPrDate}
-                                                    className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.receivedPrDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <div className="flex items-center justify-between">
-                                                    <Label className={`text-xs ${!editingProcurement.prDeliberatedDate ? 'text-slate-600' : 'text-slate-300'}`}>Published</Label>
-                                                    <Checkbox
-                                                        checked={!!editingProcurement.publishedDate}
-                                                        onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, publishedDate: checked ? (editingProcurement.publishedDate || new Date().toISOString()) : undefined })}
-                                                        disabled={!editingProcurement.prDeliberatedDate}
-                                                        className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                    />
-                                                </div>
-                                                <Input
-                                                    type="date"
-                                                    value={editingProcurement.publishedDate ? format(new Date(editingProcurement.publishedDate), 'yyyy-MM-dd') : ''}
-                                                    onChange={(e) => setEditingProcurement({ ...editingProcurement, publishedDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                    disabled={!editingProcurement.prDeliberatedDate}
-                                                    className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.prDeliberatedDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                />
-                                            </div>
+                                            <MonitoringDateField label="Received PR to Action" value={editingProcurement.receivedPrDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, receivedPrDate: d, ...(!d ? { prDeliberatedDate: undefined, publishedDate: undefined, preBidDate: undefined, bidOpeningDate: undefined, bidEvaluationDate: undefined, bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined, rfqCanvassDate: undefined, rfqOpeningDate: undefined, forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={false} activeColor="blue" />
+                                            <MonitoringDateField label="PR Deliberated" value={editingProcurement.prDeliberatedDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, prDeliberatedDate: d, ...(!d ? { publishedDate: undefined, preBidDate: undefined, bidOpeningDate: undefined, bidEvaluationDate: undefined, bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined, rfqCanvassDate: undefined, rfqOpeningDate: undefined, forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.receivedPrDate} activeColor="blue" />
+                                            <MonitoringDateField label="Published" value={editingProcurement.publishedDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, publishedDate: d, ...(!d ? { preBidDate: undefined, bidOpeningDate: undefined, bidEvaluationDate: undefined, bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined, rfqCanvassDate: undefined, rfqOpeningDate: undefined, forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.prDeliberatedDate} activeColor="blue" />
                                         </div>
                                     </div>
 
                                     {/* Bidding / Canvass */}
                                     <div className="space-y-2">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="h-8 w-1 bg-purple-500 rounded-full"></div>
-                                            <h4 className="text-sm font-semibold text-purple-400 uppercase tracking-wider">
-                                                {editingProcurement.procurementType === 'Regular Bidding' ? 'Bidding Proper' : 'Canvassing'}
-                                            </h4>
-                                        </div>
                                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                             {editingProcurement.procurementType === 'Regular Bidding' ? (
                                                 <>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.publishedDate ? 'text-slate-600' : 'text-slate-300'}`}>Pre-bid Conf</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.preBidDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, preBidDate: checked ? (editingProcurement.preBidDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.publishedDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.preBidDate ? format(new Date(editingProcurement.preBidDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, preBidDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.publishedDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.publishedDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.preBidDate ? 'text-slate-600' : 'text-slate-300'}`}>Bid Opening</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.bidOpeningDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, bidOpeningDate: checked ? (editingProcurement.bidOpeningDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.preBidDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.bidOpeningDate ? format(new Date(editingProcurement.bidOpeningDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, bidOpeningDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.preBidDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.preBidDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.bidOpeningDate ? 'text-slate-600' : 'text-slate-300'}`}>Bid Eval Report</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.bidEvaluationDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, bidEvaluationDate: checked ? (editingProcurement.bidEvaluationDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.bidOpeningDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.bidEvaluationDate ? format(new Date(editingProcurement.bidEvaluationDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, bidEvaluationDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.bidOpeningDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.bidOpeningDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
+                                                    <MonitoringDateField label="Pre-Bid" value={editingProcurement.preBidDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, preBidDate: d, ...(!d ? { bidOpeningDate: undefined, bidEvaluationDate: undefined, bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.publishedDate} activeColor="purple" />
+                                                    <MonitoringDateField label="Bid Opening" value={editingProcurement.bidOpeningDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, bidOpeningDate: d, ...(!d ? { bidEvaluationDate: undefined, bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.preBidDate} activeColor="purple" />
+                                                    <MonitoringDateField label="Bid Evaluation Report" value={editingProcurement.bidEvaluationDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, bidEvaluationDate: d, ...(!d ? { bacResolutionDate: undefined, postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.bidOpeningDate} activeColor="purple" />
                                                 </>
                                             ) : (
                                                 <>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.publishedDate ? 'text-slate-600' : 'text-slate-300'}`}>RFQ for Canvass</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.rfqCanvassDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, rfqCanvassDate: checked ? (editingProcurement.rfqCanvassDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.publishedDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.rfqCanvassDate ? format(new Date(editingProcurement.rfqCanvassDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, rfqCanvassDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.publishedDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.publishedDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.rfqCanvassDate ? 'text-slate-600' : 'text-slate-300'}`}>RFQ Opening</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.rfqOpeningDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, rfqOpeningDate: checked ? (editingProcurement.rfqOpeningDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.rfqCanvassDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.rfqOpeningDate ? format(new Date(editingProcurement.rfqOpeningDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, rfqOpeningDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.rfqCanvassDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.rfqCanvassDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
+                                                    <MonitoringDateField label="RFQ to Canvass" value={editingProcurement.rfqCanvassDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, rfqCanvassDate: d, ...(!d ? { rfqOpeningDate: undefined, bacResolutionDate: undefined, forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.publishedDate} activeColor="purple" />
+                                                    <MonitoringDateField label="RFQ Opening" value={editingProcurement.rfqOpeningDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, rfqOpeningDate: d, ...(!d ? { bacResolutionDate: undefined, forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.rfqCanvassDate} activeColor="purple" />
+                                                    <MonitoringDateField label="BAC Resolution" value={editingProcurement.bacResolutionDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, bacResolutionDate: d, ...(!d ? { forwardedGsdDate: undefined, poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.rfqOpeningDate} activeColor="purple" />
+                                                    <MonitoringDateField label="Forwarded to GSD for P.O" value={editingProcurement.forwardedGsdDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, forwardedGsdDate: d, ...(!d ? { poNtpForwardedGsdDate: undefined } : {}) })} disabled={!editingProcurement.bacResolutionDate} activeColor="purple" />
+                                                    <MonitoringDateField label="PO/NTP Forwarded to GSD" value={editingProcurement.poNtpForwardedGsdDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, poNtpForwardedGsdDate: d })} disabled={!editingProcurement.forwardedGsdDate} activeColor="purple" />
                                                 </>
                                             )}
                                         </div>
@@ -2206,145 +2834,16 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
                                     {/* Qualification & Award */}
                                     <div className="space-y-2">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="h-8 w-1 bg-emerald-500 rounded-full"></div>
-                                            <h4 className="text-sm font-semibold text-emerald-400 uppercase tracking-wider">Qualification & Award</h4>
-                                        </div>
                                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                             {editingProcurement.procurementType === 'Regular Bidding' && (
                                                 <>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.bidEvaluationDate ? 'text-slate-600' : 'text-slate-300'}`}>Post-Qual</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.postQualDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, postQualDate: checked ? (editingProcurement.postQualDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.bidEvaluationDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.postQualDate ? format(new Date(editingProcurement.postQualDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, postQualDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.bidEvaluationDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.bidEvaluationDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.postQualDate ? 'text-slate-600' : 'text-slate-300'}`}>Post-Qual Report</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.postQualReportDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, postQualReportDate: checked ? (editingProcurement.postQualReportDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.postQualDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.postQualReportDate ? format(new Date(editingProcurement.postQualReportDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, postQualReportDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.postQualDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.postQualDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                </>
-                                            )}
-
-                                            <div className="space-y-1">
-                                                <div className="flex items-center justify-between">
-                                                    <Label className={`text-xs ${!editingProcurement.postQualReportDate && !editingProcurement.rfqOpeningDate ? 'text-slate-600' : 'text-slate-300'}`}>BAC Resolution</Label>
-                                                    <Checkbox
-                                                        checked={!!editingProcurement.bacResolutionDate}
-                                                        onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, bacResolutionDate: checked ? (editingProcurement.bacResolutionDate || new Date().toISOString()) : undefined })}
-                                                        disabled={editingProcurement.procurementType === 'Regular Bidding' ? !editingProcurement.postQualReportDate : !editingProcurement.rfqOpeningDate}
-                                                        className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                    />
-                                                </div>
-                                                <Input
-                                                    type="date"
-                                                    value={editingProcurement.bacResolutionDate ? format(new Date(editingProcurement.bacResolutionDate), 'yyyy-MM-dd') : ''}
-                                                    onChange={(e) => setEditingProcurement({ ...editingProcurement, bacResolutionDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                    disabled={editingProcurement.procurementType === 'Regular Bidding' ? !editingProcurement.postQualReportDate : !editingProcurement.rfqOpeningDate}
-                                                    className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${editingProcurement.procurementType === 'Regular Bidding' ? !editingProcurement.postQualReportDate : !editingProcurement.rfqOpeningDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                />
-                                            </div>
-
-                                            {editingProcurement.procurementType === 'Regular Bidding' && (
-                                                <>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.bacResolutionDate ? 'text-slate-600' : 'text-slate-300'}`}>Notice of Award</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.noaDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, noaDate: checked ? (editingProcurement.noaDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.bacResolutionDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.noaDate ? format(new Date(editingProcurement.noaDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, noaDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.bacResolutionDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.bacResolutionDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.noaDate ? 'text-slate-600' : 'text-slate-300'}`}>Contract Date</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.contractDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, contractDate: checked ? (editingProcurement.contractDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.noaDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.contractDate ? format(new Date(editingProcurement.contractDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, contractDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.noaDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.noaDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.contractDate ? 'text-slate-600' : 'text-slate-300'}`}>NTP</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.ntpDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, ntpDate: checked ? (editingProcurement.ntpDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.contractDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.ntpDate ? format(new Date(editingProcurement.ntpDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, ntpDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.contractDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.contractDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.ntpDate ? 'text-slate-600' : 'text-slate-300'}`}>To OAPIA</Label>
-                                                            <Checkbox
-                                                                checked={!!editingProcurement.forwardedOapiDate}
-                                                                onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, forwardedOapiDate: checked ? (editingProcurement.forwardedOapiDate || new Date().toISOString()) : undefined })}
-                                                                disabled={!editingProcurement.ntpDate}
-                                                                className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                            />
-                                                        </div>
-                                                        <Input
-                                                            type="date"
-                                                            value={editingProcurement.forwardedOapiDate ? format(new Date(editingProcurement.forwardedOapiDate), 'yyyy-MM-dd') : ''}
-                                                            onChange={(e) => setEditingProcurement({ ...editingProcurement, forwardedOapiDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.ntpDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.ntpDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                        />
-                                                    </div>
+                                                    <MonitoringDateField label="BAC Resolution" value={editingProcurement.bacResolutionDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, bacResolutionDate: d, ...(!d ? { postQualDate: undefined, postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.bidEvaluationDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Post Qualification" value={editingProcurement.postQualDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, postQualDate: d, ...(!d ? { postQualReportDate: undefined, forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.bacResolutionDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Post Qualification Report" value={editingProcurement.postQualReportDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, postQualReportDate: d, ...(!d ? { forwardedOapiDate: undefined, noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.postQualDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Forwarded to OAPIA" value={editingProcurement.forwardedOapiDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, forwardedOapiDate: d, ...(!d ? { noaDate: undefined, contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.postQualReportDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Notice of Award" value={editingProcurement.noaDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, noaDate: d, ...(!d ? { contractDate: undefined, ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.forwardedOapiDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Contract Date" value={editingProcurement.contractDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, contractDate: d, ...(!d ? { ntpDate: undefined, awardedToDate: undefined } : {}) })} disabled={!editingProcurement.noaDate} activeColor="emerald" />
+                                                    <MonitoringDateField label="Notice to Proceed" value={editingProcurement.ntpDate} onChange={(d: string | undefined) => setEditingProcurement({ ...editingProcurement, ntpDate: d, ...(!d ? { awardedToDate: undefined } : {}) })} disabled={!editingProcurement.contractDate} activeColor="emerald" />
                                                 </>
                                             )}
 
@@ -2353,14 +2852,14 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                     {/* Awarded to (Date + Supplier Name) - Regular Bidding Only */}
                                                     <div className="space-y-1">
                                                         <div className="flex items-center justify-between">
-                                                            <Label className={`text-xs ${!editingProcurement.awardedToDate ? 'text-slate-600' : 'text-slate-300'}`}>Awarded Date</Label>
+                                                            <Label className={`text-xs ${!editingProcurement.ntpDate ? 'text-slate-600' : 'text-slate-300'}`}>Awarded Date</Label>
                                                             <Checkbox
                                                                 checked={!!editingProcurement.awardedToDate}
                                                                 onCheckedChange={(checked) => {
                                                                     const newDate = checked ? (editingProcurement.awardedToDate || new Date().toISOString()) : undefined;
                                                                     setEditingProcurement({ ...editingProcurement, awardedToDate: newDate });
                                                                 }}
-                                                                disabled={!editingProcurement.forwardedOapiDate}
+                                                                disabled={!editingProcurement.ntpDate}
                                                                 className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-600 disabled:opacity-50"
                                                             />
                                                         </div>
@@ -2368,8 +2867,8 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                             type="date"
                                                             value={editingProcurement.awardedToDate ? format(new Date(editingProcurement.awardedToDate), 'yyyy-MM-dd') : ''}
                                                             onChange={(e) => setEditingProcurement({ ...editingProcurement, awardedToDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                            disabled={!editingProcurement.forwardedOapiDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.forwardedOapiDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                            disabled={!editingProcurement.ntpDate}
+                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.ntpDate ? 'opacity-50 cursor-not-allowed' : ''}`}
                                                         />
                                                     </div>
                                                     <div className="space-y-1">
@@ -2381,31 +2880,14 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                                             value={editingProcurement.supplier || ''}
                                                             onChange={(e) => setEditingProcurement({ ...editingProcurement, supplier: e.target.value })}
                                                             placeholder="Supplier Name"
-                                                            disabled={!editingProcurement.awardedToDate || !editingProcurement.forwardedOapiDate}
-                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.awardedToDate || !editingProcurement.forwardedOapiDate ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                            disabled={!editingProcurement.awardedToDate || !editingProcurement.ntpDate}
+                                                            className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.awardedToDate || !editingProcurement.ntpDate ? 'opacity-50 cursor-not-allowed' : ''}`}
                                                         />
                                                     </div>
                                                 </>
                                             ) : (
-                                                /* To GSD (For SVP / Others) */
-                                                <div className="space-y-1">
-                                                    <div className="flex items-center justify-between">
-                                                        <Label className={`text-xs ${!editingProcurement.forwardedGsdDate ? 'text-slate-600' : 'text-slate-300'}`}>To GSD</Label>
-                                                        <Checkbox
-                                                            checked={!!editingProcurement.forwardedGsdDate}
-                                                            onCheckedChange={(checked) => setEditingProcurement({ ...editingProcurement, forwardedGsdDate: checked ? (editingProcurement.forwardedGsdDate || new Date().toISOString()) : undefined })}
-                                                            disabled={!editingProcurement.bacResolutionDate}
-                                                            className="h-3.5 w-3.5 border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 disabled:opacity-50"
-                                                        />
-                                                    </div>
-                                                    <Input
-                                                        type="date"
-                                                        value={editingProcurement.forwardedGsdDate ? format(new Date(editingProcurement.forwardedGsdDate), 'yyyy-MM-dd') : ''}
-                                                        onChange={(e) => setEditingProcurement({ ...editingProcurement, forwardedGsdDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                                                        disabled={!editingProcurement.bacResolutionDate}
-                                                        className={`bg-[#1e293b] border-slate-700 text-white h-8 text-xs ${!editingProcurement.bacResolutionDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                    />
-                                                </div>
+                                                /* SVP: no extra block needed here — handled in canvass section above */
+                                                null
                                             )}
                                         </div>
                                     </div>
@@ -2908,69 +3390,35 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
 
             {/* Export Configuration Dialog */}
             <Dialog open={isExportModalOpen} onOpenChange={setIsExportModalOpen} >
-                <DialogContent className="bg-[#1e293b] border-slate-800 text-white max-w-md">
+                <DialogContent className="bg-[#1e293b] border-slate-800 text-white max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Export CSV Configuration</DialogTitle>
                         <DialogDescription className="text-slate-400">
                             Select filters to apply to the exported data.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        {/* Type Filter */}
+                    <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto px-1">
+                        {/* Storage Status */}
                         <div className="space-y-2">
-                            <Label className="text-slate-300">Procurement Type</Label>
-                            <div className="flex flex-wrap gap-2">
-                                {typeOptions.map(type => (
-                                    <div key={type} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            id={`export-type-${type}`}
-                                            checked={exportFilters.type.includes(type)}
-                                            onCheckedChange={(checked) => {
-                                                setExportFilters(prev => ({
-                                                    ...prev,
-                                                    type: checked
-                                                        ? [...prev.type, type]
-                                                        : prev.type.filter(t => t !== type)
-                                                }));
-                                            }}
-                                            className="border-slate-500 data-[state=checked]:bg-purple-600"
-                                        />
-                                        <Label htmlFor={`export-type-${type}`} className="text-xs text-slate-300">{type}</Label>
-                                    </div>
-                                ))}
-                            </div>
+                            <Label className="text-slate-300">Storage Status</Label>
+                            <Select
+                                value={exportFilters.storageStatus}
+                                onValueChange={(val) => setExportFilters(prev => ({ ...prev, storageStatus: val }))}
+                            >
+                                <SelectTrigger className="bg-[#0f172a] border-slate-700 text-white">
+                                    <SelectValue placeholder="All Status" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                    <SelectItem value="all">All Status</SelectItem>
+                                    <SelectItem value="borrowed">Borrowed</SelectItem>
+                                    <SelectItem value="archived">Archived</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
-                        {/* Status Filter */}
+                        {/* End User (Divisions) */}
                         <div className="space-y-2">
-                            <Label className="text-slate-300">Status</Label>
-                            <div className="flex gap-4">
-                                {statusOptions.map(status => (
-                                    <div key={status} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            id={`export-status-${status}`}
-                                            checked={exportFilters.status.includes(status)}
-                                            onCheckedChange={(checked) => {
-                                                setExportFilters(prev => ({
-                                                    ...prev,
-                                                    status: checked
-                                                        ? [...prev.status, status]
-                                                        : prev.status.filter(s => s !== status)
-                                                }));
-                                            }}
-                                            className="border-slate-500 data-[state=checked]:bg-emerald-600"
-                                        />
-                                        <Label htmlFor={`export-status-${status}`} className="text-xs text-slate-300">{getStatusLabel(status)}</Label>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-
-
-                        {/* Division Filter */}
-                        <div className="space-y-2">
-                            <Label className="text-slate-300">Division</Label>
+                            <Label className="text-slate-300">End User (Division)</Label>
                             <Select
                                 value={exportFilters.division}
                                 onValueChange={(val) => setExportFilters(prev => ({ ...prev, division: val }))}
@@ -2978,8 +3426,8 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                                 <SelectTrigger className="bg-[#0f172a] border-slate-700 text-white">
                                     <SelectValue placeholder="All Divisions" />
                                 </SelectTrigger>
-                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white h-[200px]">
-                                    <SelectItem value="all_divisions">All Divisions</SelectItem>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
+                                    <SelectItem value="all">All Divisions</SelectItem>
                                     {divisions.map((d) => (
                                         <SelectItem key={d.id} value={d.name}>{d.name}</SelectItem>
                                     ))}
@@ -2987,29 +3435,117 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                             </Select>
                         </div>
 
-                        {/* Date Filter */}
+                        {/* Date (Year) */}
                         <div className="space-y-2">
-                            <Label className="text-slate-300">Date Added Range</Label>
+                            <Label className="text-slate-300">Date (Year)</Label>
+                            <Select
+                                value={exportFilters.year}
+                                onValueChange={(val) => setExportFilters(prev => ({ ...prev, year: val }))}
+                            >
+                                <SelectTrigger className="bg-[#0f172a] border-slate-700 text-white">
+                                    <SelectValue placeholder="All Years" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[200px]">
+                                    <SelectItem value="all">All Years</SelectItem>
+                                    {availableExportYears.map((y) => (
+                                        <SelectItem key={y} value={y}>{y}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Range of ABC */}
+                        <div className="space-y-2">
+                            <Label className="text-slate-300">Range of ABC</Label>
                             <div className="flex gap-2">
-                                <input
-                                    type="date"
-                                    className="bg-[#0f172a] border border-slate-700 rounded px-2 py-1 text-white text-xs w-full"
-                                    value={exportFilters.dateRange?.from ? format(exportFilters.dateRange.from, 'yyyy-MM-dd') : ''}
+                                <Input
+                                    type="number"
+                                    placeholder="Min ABC"
+                                    className="bg-[#0f172a] border-slate-700 text-white h-9"
+                                    value={exportFilters.abcRange.min}
                                     onChange={(e) => setExportFilters(prev => ({
                                         ...prev,
-                                        dateRange: { ...prev.dateRange, from: e.target.value ? new Date(e.target.value) : undefined, to: prev.dateRange?.to }
+                                        abcRange: { ...prev.abcRange, min: e.target.value }
                                     }))}
                                 />
-                                <input
-                                    type="date"
-                                    className="bg-[#0f172a] border border-slate-700 rounded px-2 py-1 text-white text-xs w-full"
-                                    value={exportFilters.dateRange?.to ? format(exportFilters.dateRange.to, 'yyyy-MM-dd') : ''}
+                                <Input
+                                    type="number"
+                                    placeholder="Max ABC"
+                                    className="bg-[#0f172a] border-slate-700 text-white h-9"
+                                    value={exportFilters.abcRange.max}
                                     onChange={(e) => setExportFilters(prev => ({
                                         ...prev,
-                                        dateRange: { ...prev.dateRange, from: prev.dateRange?.from, to: e.target.value ? new Date(e.target.value) : undefined }
+                                        abcRange: { ...prev.abcRange, max: e.target.value }
                                     }))}
                                 />
                             </div>
+                        </div>
+
+                        {/* Range of Bid Amount */}
+                        <div className="space-y-2">
+                            <Label className="text-slate-300">Range of Bid Amount</Label>
+                            <div className="flex gap-2">
+                                <Input
+                                    type="number"
+                                    placeholder="Min Bid"
+                                    className="bg-[#0f172a] border-slate-700 text-white h-9"
+                                    value={exportFilters.bidAmountRange.min}
+                                    onChange={(e) => setExportFilters(prev => ({
+                                        ...prev,
+                                        bidAmountRange: { ...prev.bidAmountRange, min: e.target.value }
+                                    }))}
+                                />
+                                <Input
+                                    type="number"
+                                    placeholder="Max Bid"
+                                    className="bg-[#0f172a] border-slate-700 text-white h-9"
+                                    value={exportFilters.bidAmountRange.max}
+                                    onChange={(e) => setExportFilters(prev => ({
+                                        ...prev,
+                                        bidAmountRange: { ...prev.bidAmountRange, max: e.target.value }
+                                    }))}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Storage Location */}
+                        <div className="space-y-2">
+                            <Label className="text-slate-300">Storage Location</Label>
+                            <Select
+                                value={exportFilters.storageLocation}
+                                onValueChange={(val) => setExportFilters(prev => ({ ...prev, storageLocation: val }))}
+                            >
+                                <SelectTrigger className="bg-[#0f172a] border-slate-700 text-white">
+                                    <SelectValue placeholder="All Storage" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white">
+                                    <SelectItem value="all">All Storage</SelectItem>
+                                    <SelectItem value="drawers">Drawers only</SelectItem>
+                                    <SelectItem value="boxes">Boxes only</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Process Status */}
+                        <div className="space-y-2">
+                            <Label className="text-slate-300">Process Status</Label>
+                            <Select
+                                value={exportFilters.processStatus}
+                                onValueChange={(val) => setExportFilters(prev => ({ ...prev, processStatus: val }))}
+                            >
+                                <SelectTrigger className="bg-[#0f172a] border-slate-700 text-white">
+                                    <SelectValue placeholder="All Status" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-[#1e293b] border-slate-700 text-white max-h-[250px]">
+                                    <SelectItem value="all">All Process Status</SelectItem>
+                                    <SelectItem value="Completed">Completed</SelectItem>
+                                    <SelectItem value="In Progress">In Progress</SelectItem>
+                                    <SelectItem value="Returned PR to EU">Returned PR to EU</SelectItem>
+                                    <SelectItem value="Not yet Acted">Not yet Acted</SelectItem>
+                                    <SelectItem value="Failure">Failure</SelectItem>
+                                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
                     <DialogFooter>
@@ -3061,7 +3597,83 @@ const ProcurementList: React.FC<ProcurementListProps> = ({ forcedType, pageTitle
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Import Result Modal */}
+            <Dialog open={isImportResultOpen} onOpenChange={setIsImportResultOpen}>
+                <DialogContent className="bg-[#1e293b] border-slate-800 text-white max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-xl">
+                            <Upload className="h-5 w-5 text-violet-400" />
+                            Import Complete
+                        </DialogTitle>
+                        <DialogDescription className="text-slate-400">
+                            Summary of CSV import results.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                        {/* Counters */}
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                                <p className="text-2xl font-bold text-emerald-400">{importResults.imported}</p>
+                                <p className="text-xs text-slate-400 mt-1">Imported</p>
+                            </div>
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                                <p className="text-2xl font-bold text-amber-400">{importResults.skipped.length}</p>
+                                <p className="text-xs text-slate-400 mt-1">Skipped (Duplicates)</p>
+                            </div>
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                                <p className="text-2xl font-bold text-red-400">{importResults.errors.length}</p>
+                                <p className="text-xs text-slate-400 mt-1">Errors</p>
+                            </div>
+                        </div>
+
+                        {/* Skipped PRs */}
+                        {importResults.skipped.length > 0 && (
+                            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+                                <p className="text-xs font-semibold text-amber-400 mb-2 flex items-center gap-1">
+                                    <AlertCircle className="h-3.5 w-3.5" /> Skipped — already exist in database
+                                </p>
+                                <div className="max-h-28 overflow-y-auto space-y-1">
+                                    {importResults.skipped.map((pr, i) => (
+                                        <p key={i} className="text-xs text-slate-300 font-mono">{pr}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Errors */}
+                        {importResults.errors.length > 0 && (
+                            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3">
+                                <p className="text-xs font-semibold text-red-400 mb-2 flex items-center gap-1">
+                                    <XCircle className="h-3.5 w-3.5" /> Row Errors
+                                </p>
+                                <div className="max-h-28 overflow-y-auto space-y-1">
+                                    {importResults.errors.map((err, i) => (
+                                        <p key={i} className="text-xs text-red-300 font-mono">{err}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* All OK message */}
+                        {importResults.errors.length === 0 && importResults.skipped.length === 0 && importResults.imported > 0 && (
+                            <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                                <CheckCircle2 className="h-4 w-4" />
+                                All records imported successfully!
+                            </div>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button onClick={() => setIsImportResultOpen(false)} className="bg-violet-600 hover:bg-violet-700">
+                            Done
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
+
     );
 };
 
